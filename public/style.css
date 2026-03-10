@@ -1,0 +1,337 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0a0f;
+  font-family: 'Courier New', monospace;
+  color: #e0e0e0;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#ui-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#ui-layer > * {
+  pointer-events: auto;
+}
+
+/* Prompt Overlay */
+#prompt-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  background: #0a0a0f;
+  transition: opacity 1.5s ease-out;
+}
+
+#prompt-overlay.fading {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#prompt-container {
+  display: flex;
+  align-items: center;
+  font-size: 28px;
+  color: #e0e0e0;
+}
+
+#prompt-caret {
+  margin-right: 4px;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+#prompt-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e0e0e0;
+  font-family: 'Courier New', monospace;
+  font-size: 28px;
+  caret-color: transparent;
+  width: 400px;
+}
+
+#prompt-input::placeholder {
+  color: transparent;
+}
+
+/* Resource Display */
+#resource-display {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  font-size: 13px;
+  line-height: 1.8;
+  opacity: 0;
+  transition: opacity 0.8s ease-in;
+}
+
+#resource-display.visible {
+  opacity: 1;
+}
+
+.resource-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.resource-label {
+  color: #888;
+  min-width: 90px;
+}
+
+.resource-value {
+  color: #e0e0e0;
+  font-variant-numeric: tabular-nums;
+}
+
+.resource-rate {
+  color: #666;
+  font-size: 11px;
+}
+
+/* Upgrade Panel */
+#upgrade-panel {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.8s ease-in;
+  max-width: 280px;
+}
+
+#upgrade-panel.visible {
+  opacity: 1;
+}
+
+.upgrade-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #ccc;
+  padding: 8px 14px;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.upgrade-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.upgrade-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.upgrade-btn .cost {
+  color: #888;
+  font-size: 11px;
+}
+
+/* Policy Controls */
+#policy-controls {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  transition: opacity 0.8s ease-in;
+  width: 220px;
+  pointer-events: none;
+}
+
+#policy-controls.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.policy-slider-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.policy-label {
+  font-size: 11px;
+  color: #888;
+  display: flex;
+  justify-content: space-between;
+}
+
+.policy-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  outline: none;
+}
+
+.policy-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  background: #e0e0e0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+/* Patterns Detected Panel */
+#patterns-panel {
+  position: absolute;
+  right: -320px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 280px;
+  background: rgba(10, 10, 15, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  transition: right 0.6s ease-out;
+  font-size: 12px;
+}
+
+#patterns-panel.visible {
+  right: 20px;
+}
+
+#patterns-panel h3 {
+  color: #aaa;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+}
+
+.pattern-suggestion {
+  padding: 8px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.pattern-suggestion:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Side Effects Log */
+#side-effects-log {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 340px;
+  max-height: 200px;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.8s ease-in;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+#side-effects-log.visible {
+  opacity: 1;
+}
+
+.side-effect-entry {
+  color: #555;
+  padding: 3px 0;
+  animation: fadeInEffect 0.5s ease-out;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.side-effect-entry .bonus {
+  color: #7a7;
+}
+
+@keyframes fadeInEffect {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Abstraction selection */
+.node-selected {
+  outline: 2px solid rgba(180, 120, 255, 0.6);
+}
+
+#abstraction-btn {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(140, 80, 220, 0.15);
+  border: 1px solid rgba(140, 80, 220, 0.3);
+  color: #b88adf;
+  padding: 10px 24px;
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  cursor: pointer;
+  display: none;
+  transition: all 0.2s;
+}
+
+#abstraction-btn:hover {
+  background: rgba(140, 80, 220, 0.25);
+}
+
+#abstraction-btn.visible {
+  display: block;
+}
+
+/* Tooltip */
+.tooltip {
+  position: absolute;
+  background: rgba(10, 10, 15, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 6px 10px;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 200;
+  white-space: nowrap;
+}

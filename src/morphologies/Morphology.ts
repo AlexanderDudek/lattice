@@ -29,6 +29,9 @@ export interface Morphology {
   // Custom growth direction (default: outward from center of mass + 3D random)
   splitDirection?(state: InstrumentState, node: LatticeNode): THREE.Vector3;
 
+  // Post-split hook — create cycle edges, extra connections, etc.
+  onPostSplit?(state: InstrumentState, parent: LatticeNode, child: LatticeNode): void;
+
   // Whether this mode uses ready-to-split mechanics (C/D style)
   usesReadySplit?: boolean;
 

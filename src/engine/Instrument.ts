@@ -309,6 +309,9 @@ export class Instrument {
     node.ripple = 1;
     node.bounce = 0.8;
 
+    // Post-split hook — cycle edges, extra connections, etc.
+    if (m.onPostSplit) m.onPostSplit(s, node, newNode);
+
     // Sound
     this.audio.onSplit(newPos, gen, isFirstSplit);
 

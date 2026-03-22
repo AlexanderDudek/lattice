@@ -7,12 +7,36 @@ import { Instrument } from './engine/Instrument';
 import { getAudioCtx } from './engine/audio';
 import { morphologies } from './morphologies/registry';
 
+// ─── Generate grid slots from registry ──────────────────────────────────────
+
+const grid = document.getElementById('grid')!;
+const count = morphologies.length;
+const slots: string[] = [];
+
+for (let i = 0; i < count; i++) {
+  const m = morphologies[i];
+  const slot = String.fromCharCode(97 + i); // a, b, c, ...
+  slots.push(slot);
+  const div = document.createElement('div');
+  div.className = 'quadrant';
+  div.id = `quad-${slot}`;
+  div.innerHTML = `
+    <div class="quad-label">
+      <span class="mode-name" style="color:${m.accentHex}">${m.name}</span>
+      ${m.description}
+    </div>
+    <div class="quad-counter" id="counter-${slot}"></div>
+    <div class="quad-hint" id="hint-${slot}">${m.hints.initial}</div>
+    <canvas id="canvas-${slot}"></canvas>
+  `;
+  grid.appendChild(div);
+}
+
 // ─── Create instruments ──────────────────────────────────────────────────────
 
 const instruments: Instrument[] = [];
-const slots = ['a', 'b', 'c', 'd'];
 
-for (let i = 0; i < 4; i++) {
+for (let i = 0; i < count; i++) {
   const canvas = document.getElementById(`canvas-${slots[i]}`) as HTMLCanvasElement;
   const instrument = new Instrument(canvas, morphologies[i]);
   instrument.counterEl = document.getElementById(`counter-${slots[i]}`);
@@ -53,13 +77,17 @@ mergedComposer.addPass(new RenderPass(mergedScene, mergedCamera));
 mergedComposer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 1.2, 0.4, 0.75));
 mergedComposer.addPass(new OutputPass());
 
-// Offsets: spread the 4 origins close together
-const mergedOffsets = [
-  new THREE.Vector3(-2,  0.5, -1.5),
-  new THREE.Vector3( 2, -0.3, -1.5),
-  new THREE.Vector3(-2, -0.5,  2),
-  new THREE.Vector3( 2,  0.3,  2),
-];
+// Generate offsets in a circle for any number of morphologies
+const mergedOffsets: THREE.Vector3[] = [];
+const offsetRadius = 2.5;
+for (let i = 0; i < count; i++) {
+  const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+  mergedOffsets.push(new THREE.Vector3(
+    Math.cos(angle) * offsetRadius,
+    (Math.random() - 0.5) * 0.5,
+    Math.sin(angle) * offsetRadius,
+  ));
+}
 
 function resizeMerged() {
   const w = window.innerWidth;
@@ -135,7 +163,6 @@ mergedCanvas.addEventListener('mouseleave', () => { mergedHoldMouse = null; });
 
 type ViewMode = 'grid' | 'merged' | 'solo';
 
-const grid = document.getElementById('grid')!;
 const panel = document.getElementById('control-panel')!;
 const btnView = document.getElementById('btn-view')!;
 const btnFs = document.getElementById('btn-fs')!;
@@ -152,14 +179,10 @@ function enterMerged() {
   viewMode = 'merged';
   expandedIndex = -1;
 
-  // Hide grid
   grid.style.display = 'none';
-
-  // Show merged canvas
   mergedCanvas.style.display = 'block';
   resizeMerged();
 
-  // Move each instrument's worldGroup into the merged scene with offset
   for (let i = 0; i < instruments.length; i++) {
     const inst = instruments[i];
     inst.state.scene.remove(inst.worldGroup);
@@ -172,7 +195,6 @@ function enterMerged() {
 }
 
 function exitMerged() {
-  // Move worldGroups back to their own scenes
   for (const inst of instruments) {
     mergedScene.remove(inst.worldGroup);
     inst.worldGroup.position.set(0, 0, 0);
@@ -213,7 +235,6 @@ function collapseToGrid() {
 
 // ─── View toggle button ─────────────────────────────────────────────────────
 
-// Click cycles: grid → merged → solo(pluck) → solo(drone) → ... → grid
 btnView.addEventListener('click', () => {
   if (viewMode === 'grid') {
     enterMerged();
@@ -226,7 +247,6 @@ btnView.addEventListener('click', () => {
   }
 });
 
-// Right-click goes backwards
 btnView.addEventListener('contextmenu', (e) => {
   e.preventDefault();
   if (viewMode === 'grid') {
@@ -277,16 +297,14 @@ document.addEventListener('keydown', (e) => {
     else if (viewMode !== 'grid') collapseToGrid();
   }
   const num = parseInt(e.key);
-  if (num >= 1 && num <= 4) {
+  if (num >= 1 && num <= count) {
     if (expandedIndex === num - 1) collapseToGrid();
     else expandQuadrant(num - 1);
   }
-  // M key for merged
   if (e.key === 'm' && !e.ctrlKey && !e.metaKey) {
     if (viewMode === 'merged') collapseToGrid();
     else enterMerged();
   }
-  // F key for fullscreen
   if (e.key === 'f' && !e.ctrlKey && !e.metaKey) {
     if (document.fullscreenElement) document.exitFullscreen();
     else document.documentElement.requestFullscreen();
@@ -312,7 +330,6 @@ panel.addEventListener('mouseleave', () => {
   hideTimer = setTimeout(() => panel.classList.add('hidden'), 1500);
 });
 
-// Start visible, then fade
 hideTimer = setTimeout(() => panel.classList.add('hidden'), 3000);
 
 // ─── Resize ──────────────────────────────────────────────────────────────────
@@ -331,8 +348,10 @@ function updateUI(inst: Instrument) {
   if (!inst.counterEl) return;
 
   const nodeCount = s.nodes.length;
-  const bestNode = s.nodes.reduce((a, b) => a.energy > b.energy ? a : b);
-  const energyPct = Math.floor(bestNode.energy * 100);
+  const bestNode = s.nodes.length > 0
+    ? s.nodes.reduce((a, b) => a.energy > b.energy ? a : b)
+    : null;
+  const energyPct = bestNode ? Math.floor(bestNode.energy * 100) : 0;
 
   inst.counterEl.innerHTML =
     `<span style="color:#888">nodes</span> <span style="color:#fff;font-size:16px">${nodeCount}</span><br>` +
@@ -340,7 +359,6 @@ function updateUI(inst: Instrument) {
     `<span style="color:#555">taps ${s.totalTaps}</span><br>` +
     m.counterInfo(s);
 
-  // Update hint on first split
   if (s.phaseChanged && !inst.hintSet && inst.hintEl) {
     inst.hintSet = true;
     inst.hintEl.textContent = m.hints.postSplit;
@@ -362,9 +380,7 @@ function loop(now: number) {
     updateUI(inst);
   }
 
-  // Merged view: autotap + orbit camera + render
   if (viewMode === 'merged') {
-    // Autotap while holding — BPM slows with total node count
     if (mergedHoldMouse) {
       const totalNodes = instruments.reduce((sum, inst) => sum + inst.state.nodes.length, 0);
       const bpm = 100 - Math.min(45, totalNodes * 0.4);

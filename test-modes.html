@@ -15,11 +15,27 @@
       height: 100vh;
       gap: 1px;
       background: #111;
+      transition: gap 0.4s ease;
+    }
+    #grid.fullscreen {
+      gap: 0;
     }
     .quadrant {
       position: relative;
       overflow: hidden;
       background: #050508;
+    }
+    #grid.fullscreen .quadrant {
+      display: none;
+    }
+    #grid.fullscreen .quadrant.expanded {
+      display: block;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 50;
     }
     .quadrant canvas {
       display: block;
@@ -44,6 +60,12 @@
       display: block;
       margin-bottom: 2px;
       letter-spacing: 3px;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: text-shadow 0.3s;
+    }
+    .quad-label .mode-name:hover {
+      text-shadow: 0 0 8px currentColor;
     }
     .quad-counter {
       position: absolute;
@@ -82,10 +104,62 @@
       z-index: 100;
       transition: opacity 1s;
     }
+    #control-panel {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 1px;
+      z-index: 300;
+      background: rgba(20,20,30,0.6);
+      border: 1px solid #222;
+      border-radius: 4px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      overflow: hidden;
+      opacity: 1;
+      transition: opacity 0.6s ease;
+    }
+    #control-panel.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #control-panel button {
+      background: transparent;
+      border: none;
+      color: #555;
+      font-family: 'Courier New', monospace;
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: color 0.2s, background 0.2s;
+      white-space: nowrap;
+    }
+    #control-panel button:hover {
+      color: #ccc;
+      background: rgba(255,255,255,0.05);
+    }
+    #control-panel button:active {
+      color: #fff;
+    }
+    #control-panel .sep {
+      width: 1px;
+      background: #222;
+      align-self: stretch;
+    }
   </style>
 </head>
 <body>
+  <canvas id="merged-canvas" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; z-index:40;"></canvas>
   <div id="audio-hint">click anywhere to enable audio</div>
+  <div id="control-panel">
+    <button id="btn-view">grid</button>
+    <div class="sep"></div>
+    <button id="btn-fs">fullscreen</button>
+  </div>
   <div id="grid">
     <div class="quadrant" id="quad-a">
       <div class="quad-label">

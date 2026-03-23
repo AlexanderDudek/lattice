@@ -59,6 +59,10 @@ export interface VisualProfile {
   colorSat: number;
   colorLit: number;
   hueBase: number;
+  // Energy indicator — each morphology gets a fundamentally different shape
+  indicator?: 'ring' | 'orbit' | 'column' | 'bars' | 'helix' | 'axes' | 'cloud';
+  indicatorPointSize?: number;   // default 2.5
+  indicatorSpeed?: number;       // animation speed multiplier, default 1
 }
 
 // ─── Instrument state ────────────────────────────────────────────────────────

@@ -1,6 +1,147 @@
 import * as THREE from 'three';
 import { LatticeNode, VisualProfile } from './types';
-import { nodeVertexShader, nodeFragmentShader, ringVertexShader, ringFragmentShader } from './shaders';
+import { nodeVertexShader, nodeFragmentShader, indicatorVertexShader, indicatorFragmentShader } from './shaders';
+
+/** Generate indicator point positions + progress for each style */
+function buildIndicatorGeometry(style: string, r: number): { positions: Float32Array; progress: Float32Array } {
+  const pts: number[] = [];
+  const prog: number[] = [];
+
+  switch (style) {
+    case 'orbit': {
+      // 3 tilted orbital rings — like an atom
+      const n = 32;
+      const tilts = [
+        { ax: 0, az: 0 },                   // XZ plane
+        { ax: Math.PI * 0.4, az: 0.3 },     // tilted ring 2
+        { ax: -Math.PI * 0.3, az: -0.5 },   // tilted ring 3
+      ];
+      for (const tilt of tilts) {
+        const cx = Math.cos(tilt.ax);
+        const sx = Math.sin(tilt.ax);
+        const cz = Math.cos(tilt.az);
+        const sz = Math.sin(tilt.az);
+        for (let i = 0; i < n; i++) {
+          const t = i / n;
+          const a = t * Math.PI * 2;
+          let x = Math.cos(a) * r;
+          let y = 0;
+          let z = Math.sin(a) * r;
+          // Rotate around X then Z
+          const y1 = y * cx - z * sx;
+          const z1 = y * sx + z * cx;
+          const x2 = x * cz - y1 * sz;
+          const y2 = x * sz + y1 * cz;
+          pts.push(x2, y2, z1);
+          prog.push(t);
+        }
+      }
+      break;
+    }
+    case 'column': {
+      // Vertical column of points — energy fills bottom to top
+      const n = 48;
+      const height = r * 3;
+      for (let i = 0; i < n; i++) {
+        const t = i / (n - 1);
+        const y = -height / 2 + t * height;
+        // Slight random scatter on x/z for thickness
+        const scatter = r * 0.25;
+        const angle = (i * 137.508) * Math.PI / 180; // golden angle scatter
+        const sr = scatter * (0.5 + 0.5 * Math.sin(i * 2.3));
+        pts.push(Math.cos(angle) * sr, y, Math.sin(angle) * sr);
+        prog.push(t);
+      }
+      break;
+    }
+    case 'bars': {
+      // 6 radial bars pointing outward — like a compass rose
+      const numBars = 6;
+      const ptsPerBar = 10;
+      for (let b = 0; b < numBars; b++) {
+        const angle = (b / numBars) * Math.PI * 2;
+        const dx = Math.cos(angle);
+        const dz = Math.sin(angle);
+        for (let i = 0; i < ptsPerBar; i++) {
+          const t = i / (ptsPerBar - 1);
+          const dist = r * 0.6 + t * r * 1.0;
+          pts.push(dx * dist, 0, dz * dist);
+          prog.push(t);
+        }
+      }
+      break;
+    }
+    case 'helix': {
+      // Double helix — DNA-like spiral
+      const n = 48;
+      const turns = 2;
+      const height = r * 2.5;
+      for (let strand = 0; strand < 2; strand++) {
+        const offset = strand * Math.PI;
+        for (let i = 0; i < n; i++) {
+          const t = i / (n - 1);
+          const a = t * Math.PI * 2 * turns + offset;
+          const y = -height / 2 + t * height;
+          pts.push(Math.cos(a) * r * 0.7, y, Math.sin(a) * r * 0.7);
+          prog.push(t);
+        }
+      }
+      break;
+    }
+    case 'axes': {
+      // 3 perpendicular axes (x, y, z) — fill along each
+      const ptsPerAxis = 16;
+      const axes = [
+        [1, 0, 0], [0, 1, 0], [0, 0, 1],
+        [-1, 0, 0], [0, -1, 0], [0, 0, -1],
+      ];
+      for (const [ax, ay, az] of axes) {
+        for (let i = 0; i < ptsPerAxis; i++) {
+          const t = i / (ptsPerAxis - 1);
+          const dist = r * 0.3 + t * r * 1.3;
+          pts.push(ax * dist, ay * dist, az * dist);
+          prog.push(t);
+        }
+      }
+      break;
+    }
+    case 'cloud': {
+      // Spherical cloud of points — fills inward to outward
+      const n = 64;
+      for (let i = 0; i < n; i++) {
+        // Fibonacci sphere distribution
+        const t = i / (n - 1);
+        const y = 1 - 2 * t;
+        const rSlice = Math.sqrt(1 - y * y);
+        const phi = i * 2.39996323; // golden angle
+        const dist = r * (0.5 + t * 1.0);
+        pts.push(
+          Math.cos(phi) * rSlice * dist,
+          y * dist,
+          Math.sin(phi) * rSlice * dist
+        );
+        prog.push(t);
+      }
+      break;
+    }
+    default: {
+      // ring — classic flat circle (original behavior)
+      const n = 64;
+      for (let i = 0; i < n; i++) {
+        const t = i / n;
+        const a = t * Math.PI * 2;
+        pts.push(Math.cos(a) * r, 0, Math.sin(a) * r);
+        prog.push(t);
+      }
+      break;
+    }
+  }
+
+  return {
+    positions: new Float32Array(pts),
+    progress: new Float32Array(prog),
+  };
+}
 
 export function createNodeMesh(node: LatticeNode, group: THREE.Group, profile: VisualProfile): void {
   const geo = profile.nodeGeometry();
@@ -26,37 +167,35 @@ export function createNodeMesh(node: LatticeNode, group: THREE.Group, profile: V
   group.add(mesh);
   node.mesh = mesh;
 
-  // Energy ring
-  const ringPoints = 64;
-  const ringRadius = profile.nodeScale * 1.5;
-  const positions = new Float32Array(ringPoints * 3);
-  const angles = new Float32Array(ringPoints);
-  for (let i = 0; i < ringPoints; i++) {
-    const a = (i / ringPoints) * Math.PI * 2;
-    positions[i * 3] = Math.cos(a) * ringRadius;
-    positions[i * 3 + 1] = 0;
-    positions[i * 3 + 2] = Math.sin(a) * ringRadius;
-    angles[i] = a;
-  }
-  const ringGeo = new THREE.BufferGeometry();
-  ringGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  ringGeo.setAttribute('aAngle', new THREE.BufferAttribute(angles, 1));
-  const ringMat = new THREE.ShaderMaterial({
-    vertexShader: ringVertexShader,
-    fragmentShader: ringFragmentShader,
+  // Energy indicator — fundamentally different geometry per morphology
+  const style = profile.indicator ?? 'ring';
+  const r = profile.nodeScale * 1.6;
+  const { positions: indPos, progress: indProg } = buildIndicatorGeometry(style, r);
+
+  const indGeo = new THREE.BufferGeometry();
+  indGeo.setAttribute('position', new THREE.BufferAttribute(indPos, 3));
+  indGeo.setAttribute('aProgress', new THREE.BufferAttribute(indProg, 1));
+  const indMat = new THREE.ShaderMaterial({
+    vertexShader: indicatorVertexShader,
+    fragmentShader: indicatorFragmentShader,
     uniforms: {
       uEnergy: { value: 0 },
       uColor: { value: node.color.clone() },
       uTime: { value: 0 },
+      uPointSize: { value: profile.indicatorPointSize ?? 2.5 },
+      uSpeed: { value: profile.indicatorSpeed ?? 1.0 },
     },
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
-  const ringMesh = new THREE.Points(ringGeo, ringMat);
+  const ringMesh = new THREE.Points(indGeo, indMat);
   ringMesh.position.copy(node.position);
-  ringMesh.rotation.x = -Math.PI * 0.35;
-  ringMesh.rotation.y = Math.PI * 0.25;
+  // Only tilt ring-style indicators to match iso camera
+  if (style === 'ring' || style === 'orbit') {
+    ringMesh.rotation.x = -Math.PI * 0.35;
+    ringMesh.rotation.y = Math.PI * 0.25;
+  }
   group.add(ringMesh);
   node.ringMesh = ringMesh;
 }

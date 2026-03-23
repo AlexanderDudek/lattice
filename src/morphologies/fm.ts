@@ -126,6 +126,9 @@ const profile: VisualProfile = {
   colorSat: 0.75,
   colorLit: 0.6,
   hueBase: 0.75,
+  indicator: 'helix',        // double helix — FM sidebands, interference
+  indicatorPointSize: 2.0,
+  indicatorSpeed: 2.5,
 };
 
 // ─── Morphology ──────────────────────────────────────────────────────────────

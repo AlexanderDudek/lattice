@@ -71,6 +71,43 @@
     .quad-label .mode-name:hover {
       text-shadow: 0 0 8px currentColor;
     }
+    .audio-controls {
+      display: inline-flex;
+      gap: 3px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .audio-controls button {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid #333;
+      color: #555;
+      font-family: 'Courier New', monospace;
+      font-size: 9px;
+      font-weight: bold;
+      width: 18px;
+      height: 18px;
+      line-height: 16px;
+      text-align: center;
+      padding: 0;
+      cursor: pointer;
+      border-radius: 2px;
+      pointer-events: auto;
+      transition: all 0.15s;
+    }
+    .audio-controls button:hover {
+      color: #ccc;
+      border-color: #666;
+    }
+    .btn-mute.active {
+      color: #ff4444 !important;
+      border-color: #ff4444 !important;
+      background: rgba(255,68,68,0.15) !important;
+    }
+    .btn-solo.active {
+      color: #ffcc00 !important;
+      border-color: #ffcc00 !important;
+      background: rgba(255,204,0,0.15) !important;
+    }
     .quad-counter {
       position: absolute;
       top: 8px;

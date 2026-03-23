@@ -48,6 +48,9 @@ const profile: VisualProfile = {
   colorSat: 0.7,
   colorLit: 0.58,
   hueBase: 0.52,
+  indicator: 'orbit',        // 3 tilted orbital rings — atomic, crystalline
+  indicatorPointSize: 2.0,
+  indicatorSpeed: 2.0,
 };
 
 // ─── Morphology ──────────────────────────────────────────────────────────────

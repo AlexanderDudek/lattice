@@ -120,6 +120,9 @@ const profile: VisualProfile = {
   colorSat: 0.9,
   colorLit: 0.5,
   hueBase: 0.02,
+  indicator: 'cloud',        // ember cloud — chaotic, volatile
+  indicatorPointSize: 3.0,
+  indicatorSpeed: 4.0,       // fast flickering
 };
 
 // ─── Morphology ──────────────────────────────────────────────────────────────

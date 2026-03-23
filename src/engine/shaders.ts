@@ -60,30 +60,50 @@ export const nodeFragmentShader = `
   }
 `;
 
-export const ringVertexShader = `
-  attribute float aAngle;
-  varying float vAngle;
+export const indicatorVertexShader = `
+  attribute float aProgress; // 0-1 normalized position along the indicator
+  varying float vProgress;
+  uniform float uPointSize;
+  uniform float uTime;
+  uniform float uSpeed;
+  uniform float uEnergy;
 
   void main() {
-    vAngle = aAngle;
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vProgress = aProgress;
+    vec3 pos = position;
+
+    // Animate: filled points pulse outward slightly
+    float filled = step(aProgress, uEnergy);
+    float pulse = sin(uTime * 3.0 * uSpeed + aProgress * 12.0) * 0.03 * filled;
+    pos *= 1.0 + pulse;
+
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mvPosition;
-    gl_PointSize = 2.5;
+
+    // Filled points are slightly larger
+    gl_PointSize = uPointSize * (0.6 + filled * 0.6);
   }
 `;
 
-export const ringFragmentShader = `
-  varying float vAngle;
+export const indicatorFragmentShader = `
+  varying float vProgress;
   uniform float uEnergy;
   uniform vec3 uColor;
   uniform float uTime;
+  uniform float uSpeed;
 
   void main() {
-    float fill = step(vAngle, uEnergy * 6.2832);
-    float pulse = sin(uTime * 3.0 + vAngle * 2.0) * 0.15 + 0.85;
-    vec3 color = uColor * fill * pulse;
-    color += uColor * (1.0 - fill) * 0.08;
-    float alpha = fill * 0.9 + (1.0 - fill) * 0.15;
+    // Round point
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5) discard;
+
+    float filled = step(vProgress, uEnergy);
+    float pulse = sin(uTime * 3.0 * uSpeed + vProgress * 8.0) * 0.15 + 0.85;
+
+    vec3 color = uColor * filled * pulse;
+    color += uColor * (1.0 - filled) * 0.06;
+    float alpha = filled * (0.9 * smoothstep(0.5, 0.2, d)) + (1.0 - filled) * 0.08;
+
     gl_FragColor = vec4(color, alpha);
   }
 `;

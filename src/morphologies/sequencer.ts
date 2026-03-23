@@ -70,6 +70,9 @@ const profile: VisualProfile = {
   colorSat: 0.8,
   colorLit: 0.55,
   hueBase: 0.35,
+  indicator: 'bars',         // 6 radial bars — mechanical, precise
+  indicatorPointSize: 3.0,
+  indicatorSpeed: 1.5,
 };
 
 // ─── Morphology ──────────────────────────────────────────────────────────────

@@ -24,6 +24,10 @@ for (let i = 0; i < count; i++) {
     <div class="quad-label">
       <span class="mode-name" style="color:${m.accentHex}">${m.name}</span>
       ${m.description}
+      <span class="audio-controls">
+        <button class="btn-mute" id="mute-${slot}" title="Mute">M</button>
+        <button class="btn-solo" id="solo-${slot}" title="Solo">S</button>
+      </span>
     </div>
     <div class="quad-counter" id="counter-${slot}"></div>
     <div class="quad-hint" id="hint-${slot}">${m.hints.initial}</div>
@@ -44,11 +48,58 @@ for (let i = 0; i < count; i++) {
   instruments.push(instrument);
 }
 
+// ─── Mute / Solo controls ────────────────────────────────────────────────────
+
+import { BaseAudio } from './engine/audio';
+
+let soloIndex = -1; // -1 = no solo active
+
+function updateMuteState() {
+  for (let i = 0; i < instruments.length; i++) {
+    const audio = instruments[i].audio as BaseAudio;
+    const muteBtn = document.getElementById(`mute-${slots[i]}`)!;
+    const soloBtn = document.getElementById(`solo-${slots[i]}`)!;
+
+    if (soloIndex >= 0) {
+      // Solo mode: only the soloed instrument is audible
+      audio.muted = i !== soloIndex;
+    }
+    // else respect individual mute state (already set)
+
+    muteBtn.classList.toggle('active', audio.muted);
+    soloBtn.classList.toggle('active', soloIndex === i);
+  }
+}
+
+for (let i = 0; i < count; i++) {
+  const muteBtn = document.getElementById(`mute-${slots[i]}`)!;
+  const soloBtn = document.getElementById(`solo-${slots[i]}`)!;
+
+  muteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (soloIndex >= 0) return; // ignore mute while solo is active
+    const audio = instruments[i].audio as BaseAudio;
+    audio.muted = !audio.muted;
+    updateMuteState();
+  });
+
+  soloBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    soloIndex = soloIndex === i ? -1 : i;
+    // When exiting solo, unmute all
+    if (soloIndex === -1) {
+      instruments.forEach(inst => (inst.audio as BaseAudio).muted = false);
+    }
+    updateMuteState();
+  });
+}
+
 // ─── Audio init on first click ───────────────────────────────────────────────
 
 document.addEventListener('click', () => {
   getAudioCtx();
   instruments.forEach(inst => inst.initAudio());
+  updateMuteState();
   const hint = document.getElementById('audio-hint');
   if (hint) { hint.style.opacity = '0'; setTimeout(() => hint.remove(), 1000); }
 }, { once: true });

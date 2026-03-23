@@ -11,7 +11,16 @@ class DroneAudio extends BaseAudio {
   private droneGains: GainNode[] = [];
   private droneFilter: BiquadFilterNode | null = null;
 
+  private droneStarted = false;
+
   protected onInit() {
+    // Don't start the drone yet — wait for first split
+  }
+
+  /** Lazily start the drone on first split */
+  ensureDrone() {
+    if (this.droneStarted || !this.ready) return;
+    this.droneStarted = true;
     this.startDrone();
   }
 
@@ -40,7 +49,7 @@ class DroneAudio extends BaseAudio {
 
   onTap(_pos: THREE.Vector3, _energy: number, _gen: number, intensity: number) {
     if (!this.ready) return;
-    this.nudgeDrone();
+    this.ensureDrone();
     this.playDroneTap(intensity);
   }
 
@@ -73,6 +82,7 @@ class DroneAudio extends BaseAudio {
 
   onSplit(pos: THREE.Vector3, _gen: number, _isFirst: boolean) {
     if (!this.ready) return;
+    this.ensureDrone();
     const idx = Math.abs(Math.round(pos.x * 2 + pos.z)) % pentatonic.length;
     const semi = pentatonic[idx];
     const freq = 110 * Math.pow(2, semi / 12) * 0.25;
@@ -113,6 +123,9 @@ const profile: VisualProfile = {
   colorSat: 0.65,
   colorLit: 0.52,
   hueBase: 0.08,
+  indicator: 'cloud',        // spherical cloud — organic, amorphous
+  indicatorPointSize: 3.5,
+  indicatorSpeed: 0.4,
 };
 
 // ─── Morphology ──────────────────────────────────────────────────────────────

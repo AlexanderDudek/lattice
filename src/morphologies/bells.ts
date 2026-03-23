@@ -67,6 +67,9 @@ const profile: VisualProfile = {
   colorSat: 0.55,
   colorLit: 0.55,
   hueBase: 0.12,
+  indicator: 'axes',         // 6 axis spikes — star/compass, resonant
+  indicatorPointSize: 2.5,
+  indicatorSpeed: 0.7,
 };
 
 // ─── Morphology ──────────────────────────────────────────────────────────────

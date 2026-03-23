@@ -35,6 +35,7 @@ export abstract class BaseAudio implements MorphologyAudio {
   protected ctx!: AudioContext;
   protected master!: GainNode;
   protected ready = false;
+  private _muted = false;
 
   init() {
     if (this.ready) return;
@@ -44,6 +45,12 @@ export abstract class BaseAudio implements MorphologyAudio {
     this.master.connect(this.ctx.destination);
     this.ready = true;
     this.onInit();
+  }
+
+  get muted() { return this._muted; }
+  set muted(v: boolean) {
+    this._muted = v;
+    if (this.ready) this.master.gain.value = v ? 0 : 0.25;
   }
 
   protected onInit() {}

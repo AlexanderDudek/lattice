@@ -26,6 +26,88 @@ export class Instrument {
   private _holdMouse: THREE.Vector2 | null = null;
   private _holdAccum = 0;
 
+  /**
+   * Create a headless instrument (no renderer/composer/canvas listeners).
+   * Used in universe mode where a shared scene handles rendering.
+   */
+  static headless(morphology: Morphology): Instrument {
+    const inst = Object.create(Instrument.prototype) as Instrument;
+    inst.morphology = morphology;
+    inst.audio = morphology.createAudio();
+    inst.counterEl = null;
+    inst.hintEl = null;
+    inst.hintSet = false;
+    inst.skipRender = true;
+    inst._holdMouse = null;
+    inst._holdAccum = 0;
+
+    const profile = morphology.profile;
+    const scene = new THREE.Scene();
+    // Dummy renderer/composer/camera — never used, but state expects them
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -50, 100);
+    camera.position.set(10, 10, 10);
+    camera.lookAt(0, 0, 0);
+
+    const nodeGroup = new THREE.Group();
+    const edgeGroup = new THREE.Group();
+    const packetGroup = new THREE.Group();
+    const attractorGroup = new THREE.Group();
+    inst.worldGroup = new THREE.Group();
+    inst.worldGroup.add(nodeGroup, edgeGroup, packetGroup, attractorGroup);
+    scene.add(inst.worldGroup);
+
+    const initialNode: LatticeNode = {
+      id: 0,
+      position: new THREE.Vector3(0, 0, 0),
+      energy: 0,
+      tapCount: 0,
+      splitCost: INITIAL_SPLIT_COST,
+      ripple: 0,
+      ripplePhase: 0,
+      color: profile.nodeColor.clone(),
+      born: 0,
+      ready: false,
+      readyGlow: 0,
+      mesh: null,
+      ringMesh: null,
+      generation: 0,
+      bounce: 0,
+      lastTapTime: -10,
+    };
+
+    inst.state = {
+      canvas: null as any,
+      renderer: null as any,
+      scene,
+      camera,
+      cameraBase: new THREE.Vector3(10, 10, 10),
+      composer: null as any,
+      bloomPass: null as any,
+      profile,
+      nodes: [initialNode],
+      packets: [],
+      edges: [],
+      attractors: [],
+      nextId: 1,
+      totalTaps: 0,
+      phaseChanged: false,
+      bgHue: profile.bgHueBase,
+      bgTarget: profile.bgHueBase,
+      tension: 0,
+      time: 0,
+      splitFlash: 0,
+      screenShake: 0,
+      nodeGroup,
+      edgeGroup,
+      packetGroup,
+      attractorGroup,
+      cascadeWaves: [],
+    };
+
+    createNodeMesh(initialNode, nodeGroup, profile);
+    return inst;
+  }
+
   constructor(canvas: HTMLCanvasElement, morphology: Morphology) {
     this.morphology = morphology;
     this.audio = morphology.createAudio();
@@ -160,6 +242,43 @@ export class Instrument {
   }
 
   // ─── Tap handling ────────────────────────────────────────────────────────
+
+  /** Directly tap a specific node — bypasses raycasting. */
+  tapNode(node: LatticeNode) {
+    const s = this.state;
+    s.totalTaps++;
+    s.screenShake = Math.max(s.screenShake, 0.08 + node.energy * 0.15);
+    node.bounce = 1;
+    node.lastTapTime = s.time;
+
+    this.audio.onTap(node.position, node.energy, node.generation, 0.3 + node.energy * 0.7);
+
+    if (this.morphology.usesReadySplit && node.ready && s.phaseChanged) {
+      node.ready = false;
+      node.readyGlow = 0;
+      s.screenShake = 0.5;
+      this.splitNode(node);
+      return;
+    }
+
+    const energyPerTap = (1 / node.splitCost) * 0.4;
+    node.energy = Math.min(1, node.energy + energyPerTap);
+    node.tapCount++;
+    node.ripple = Math.min(1, node.ripple + 0.9);
+    node.ripplePhase = 0;
+
+    if (!s.phaseChanged) {
+      s.tension = Math.min(1, s.totalTaps / INITIAL_SPLIT_COST);
+      s.bgTarget = s.profile.bgHueBase + s.tension * 0.1;
+      if (s.bloomPass) s.bloomPass.strength = s.profile.bloomStrength + s.tension * 0.6;
+    }
+
+    if (s.phaseChanged && this.morphology.onTap) {
+      this.morphology.onTap(s, node);
+    }
+
+    if (node.energy >= 1) this.splitNode(node);
+  }
 
   /**
    * Process a tap from a raycaster. The offset is subtracted from the ray
@@ -338,26 +457,29 @@ export class Instrument {
 
     // Background
     s.bgHue += (s.bgTarget - s.bgHue) * dt * 2;
-    s.renderer.setClearColor(new THREE.Color().setHSL(s.bgHue, 0.12, 0.018 + s.tension * 0.012));
+    if (s.renderer) s.renderer.setClearColor(new THREE.Color().setHSL(s.bgHue, 0.12, 0.018 + s.tension * 0.012));
 
-    // Orbit
-    const orbitRadius = 17;
-    const orbitAngle = t * 0.15;
-    s.cameraBase.set(
-      Math.cos(orbitAngle) * orbitRadius,
-      10 + Math.sin(t * 0.1) * 1.5,
-      Math.sin(orbitAngle) * orbitRadius
-    );
-    s.camera.position.copy(s.cameraBase);
-    s.camera.lookAt(0, 0, 0);
+    // Orbit + screen shake (only when instrument owns its own camera)
+    if (!this.skipRender) {
+      const orbitRadius = 17;
+      const orbitAngle = t * 0.15;
+      s.cameraBase.set(
+        Math.cos(orbitAngle) * orbitRadius,
+        10 + Math.sin(t * 0.1) * 1.5,
+        Math.sin(orbitAngle) * orbitRadius
+      );
+      s.camera.position.copy(s.cameraBase);
+      s.camera.lookAt(0, 0, 0);
 
-    // Screen shake
+      if (s.screenShake > 0.001) {
+        const sx = (Math.random() - 0.5) * s.screenShake * 0.5;
+        const sy = (Math.random() - 0.5) * s.screenShake * 0.5;
+        s.camera.position.x += sx;
+        s.camera.position.y += sy;
+        s.camera.position.z += sx * 0.5;
+      }
+    }
     if (s.screenShake > 0.001) {
-      const sx = (Math.random() - 0.5) * s.screenShake * 0.5;
-      const sy = (Math.random() - 0.5) * s.screenShake * 0.5;
-      s.camera.position.x += sx;
-      s.camera.position.y += sy;
-      s.camera.position.z += sx * 0.5;
       s.screenShake *= Math.pow(0.05, dt);
     } else {
       s.screenShake = 0;
@@ -366,8 +488,8 @@ export class Instrument {
     // Split flash
     if (s.splitFlash > 0) {
       s.splitFlash = Math.max(0, s.splitFlash - dt * 4);
-      s.bloomPass.strength = s.profile.bloomStrength + s.splitFlash * 2.5;
-    } else if (s.phaseChanged) {
+      if (s.bloomPass) s.bloomPass.strength = s.profile.bloomStrength + s.splitFlash * 2.5;
+    } else if (s.phaseChanged && s.bloomPass) {
       s.bloomPass.strength = s.profile.bloomStrength;
     }
 
@@ -394,6 +516,7 @@ export class Instrument {
         const rm = node.ringMesh.material as THREE.ShaderMaterial;
         rm.uniforms.uEnergy.value = node.energy;
         rm.uniforms.uTime.value = t;
+        rm.uniforms.uSegments.value = node.splitCost;
         node.ringMesh.scale.setScalar(spawnScale);
       }
       if (node.ripple > 0.01) {
@@ -439,7 +562,7 @@ export class Instrument {
         if (target) {
           this.audio.onPacketArrive(target.position, target.energy, target.generation);
 
-          const energyGain = (1 / target.splitCost) * 0.4;
+          const energyGain = (1 / target.splitCost) * 0.8;
           target.energy = Math.min(1, target.energy + energyGain);
           target.ripple = Math.min(1, target.ripple + 0.2);
           target.ripplePhase = 0;
@@ -477,6 +600,17 @@ export class Instrument {
 
     // Mode-specific update
     m.update(s, dt);
+
+    // Spontaneous packets — the network hums on its own
+    if (s.phaseChanged && s.edges.length > 0) {
+      const spontaneousRate = 0.15 + s.edges.length * 0.03;
+      if (Math.random() < spontaneousRate * dt) {
+        const edge = s.edges[Math.floor(Math.random() * s.edges.length)];
+        const dir = Math.random() > 0.5;
+        spawnPacket(s, dir ? edge.from : edge.to, dir ? edge.to : edge.from,
+          0.3 + Math.random() * 0.5, 0.04 + Math.random() * 0.03, m);
+      }
+    }
 
     // Autotap while holding — BPM slows as network grows
     if (this._holdMouse && !this.skipRender) {

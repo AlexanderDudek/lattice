@@ -91,19 +91,44 @@ export const indicatorFragmentShader = `
   uniform vec3 uColor;
   uniform float uTime;
   uniform float uSpeed;
+  uniform float uSegments;
 
   void main() {
     // Round point
     float d = length(gl_PointCoord - vec2(0.5));
     if (d > 0.5) discard;
 
-    float filled = step(vProgress, uEnergy);
-    float pulse = sin(uTime * 3.0 * uSpeed + vProgress * 8.0) * 0.15 + 0.85;
+    float seg = uSegments;
+    // Which segment does this point belong to?
+    float segIndex = floor(vProgress * seg);
+    float segStart = segIndex / seg;
+    float segEnd = (segIndex + 1.0) / seg;
+    float segCenter = (segStart + segEnd) * 0.5;
+    float withinSeg = (vProgress - segStart) / (segEnd - segStart);
 
-    vec3 color = uColor * filled * pulse;
-    color += uColor * (1.0 - filled) * 0.06;
-    float alpha = filled * (0.9 * smoothstep(0.5, 0.2, d)) + (1.0 - filled) * 0.08;
+    // Gap between segments: hide points near segment boundaries
+    float gap = 0.2; // 20% of each segment is gap
+    float inGap = step(1.0 - gap, withinSeg) + step(withinSeg, gap * 0.5);
+    float segVisible = 1.0 - min(1.0, inGap);
 
+    // How many segments are filled? One per tap.
+    float filledCount = floor(uEnergy * seg + 0.01);
+    float isFilled = step(segIndex, filledCount - 0.5);
+
+    // The currently-filling segment gets partial brightness
+    float isPartial = step(filledCount - 0.5, segIndex) * step(segIndex, filledCount + 0.5);
+    float partialFill = fract(uEnergy * seg);
+
+    float brightness = isFilled + isPartial * partialFill * 0.5;
+
+    float pulse = sin(uTime * 3.0 * uSpeed + segIndex * 1.5) * 0.12 + 0.88;
+
+    vec3 color = uColor * brightness * pulse * segVisible;
+    color += uColor * (1.0 - brightness) * 0.04 * segVisible;
+    float alpha = brightness * (0.9 * smoothstep(0.5, 0.2, d)) * segVisible
+                + (1.0 - brightness) * 0.1 * segVisible;
+
+    if (alpha < 0.01) discard;
     gl_FragColor = vec4(color, alpha);
   }
 `;

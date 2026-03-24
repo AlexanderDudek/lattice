@@ -184,6 +184,7 @@ export function createNodeMesh(node: LatticeNode, group: THREE.Group, profile: V
       uTime: { value: 0 },
       uPointSize: { value: profile.indicatorPointSize ?? 2.5 },
       uSpeed: { value: profile.indicatorSpeed ?? 1.0 },
+      uSegments: { value: 4 }, // updated per-frame from node.splitCost
     },
     transparent: true,
     depthWrite: false,

@@ -365,7 +365,9 @@ export class Instrument {
     node.tapCount = 0;
 
     const gen = node.generation + 1;
-    const spacing = 1.0 + gen * 0.2;
+    // Small chance (~5%) of a long-reach split — promotes irregular, organic growth
+    const reach = Math.random() < 0.05 ? 2.5 + Math.random() * 3.0 : 1.0;
+    const spacing = (1.0 + gen * 0.2) * reach;
 
     // Growth direction — morphology can override via splitDirection
     let dir: THREE.Vector3;

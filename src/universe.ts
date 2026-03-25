@@ -188,6 +188,59 @@ interface CollapseAnim {
 
 const collapseAnims: CollapseAnim[] = [];
 
+/** Black hole sound — descending sub-bass with noise wash */
+function playCollapseSound() {
+  if (!audioReady) return;
+  const ctx = getAudioCtx();
+  const t = ctx.currentTime;
+
+  // Sub-bass sweep: 80Hz → 20Hz over 2s
+  const sub = ctx.createOscillator();
+  const subGain = ctx.createGain();
+  sub.type = 'sine';
+  sub.frequency.setValueAtTime(80, t);
+  sub.frequency.exponentialRampToValueAtTime(20, t + 2.0);
+  subGain.gain.setValueAtTime(0.2, t);
+  subGain.gain.setValueAtTime(0.2, t + 0.5);
+  subGain.gain.exponentialRampToValueAtTime(0.001, t + 2.5);
+  sub.connect(subGain).connect(ctx.destination);
+  sub.start(t);
+  sub.stop(t + 2.6);
+
+  // Filtered noise wash — sucking sound
+  const bufSize = Math.floor(ctx.sampleRate * 0.1);
+  const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+  const data = buf.getChannelData(0);
+  for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+  const noise = ctx.createBufferSource();
+  noise.buffer = buf;
+  noise.loop = true;
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.setValueAtTime(800, t);
+  noiseFilter.frequency.exponentialRampToValueAtTime(60, t + 1.8);
+  noiseFilter.Q.value = 3;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.08, t);
+  noiseGain.gain.setValueAtTime(0.12, t + 0.8);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 2.2);
+  noise.connect(noiseFilter).connect(noiseGain).connect(ctx.destination);
+  noise.start(t);
+  noise.stop(t + 2.3);
+
+  // Low thud on impact
+  const thud = ctx.createOscillator();
+  const thudGain = ctx.createGain();
+  thud.type = 'sine';
+  thud.frequency.value = 35;
+  thudGain.gain.setValueAtTime(0, t + 1.0);
+  thudGain.gain.linearRampToValueAtTime(0.3, t + 1.05);
+  thudGain.gain.exponentialRampToValueAtTime(0.001, t + 1.8);
+  thud.connect(thudGain).connect(ctx.destination);
+  thud.start(t + 1.0);
+  thud.stop(t + 1.9);
+}
+
 /** Surgically remove a single node from its organism */
 function removeNodeFromOrganism(org: Organism, node: LatticeNode) {
   const s = org.instrument.state;
@@ -265,6 +318,8 @@ function triggerSpatialCollapse(
     phase: 'implode',
     newOrigin,
   });
+
+  playCollapseSound();
 }
 
 function updateCollapses(dt: number) {
@@ -413,8 +468,12 @@ canvas.addEventListener('mouseleave', () => { holdMouse = null; });
 
 // ─── Camera ─────────────────────────────────────────────────────────────────
 
+// Camera focus — drifts on its own, completely decoupled from collapse events
+const cameraFocus = new THREE.Vector3(0, 0, 0);
+let smoothFrustum = startFrustum;
+
 function updateCamera(dt: number) {
-  // Slowly orbit, and track center of all organisms
+  // Target = center of mass of living organisms (or last known position)
   const com = new THREE.Vector3();
   let total = 0;
   for (const org of organisms) {
@@ -424,26 +483,32 @@ function updateCamera(dt: number) {
   }
   if (total > 0) com.divideScalar(total);
 
-  // Zoom based on total nodes — start tight, ease out as universe grows
+  // Very slow drift toward target — camera is unbothered
+  cameraFocus.lerp(com, dt * 0.12);
+
+  // Zoom based on total nodes
   const totalNodes = organisms.reduce((s, o) => s + (o.collapsed ? 0 : o.instrument.state.nodes.length), 0);
   const targetFrustum = Math.max(1.5, 1.8 + Math.sqrt(Math.max(0, totalNodes - 1)) * 0.6 + organisms.length * 1.0 + zoomOffset);
-  const orbitRadius = 10 + targetFrustum * 0.5;
+  // Smooth the frustum too — never snaps
+  smoothFrustum += (targetFrustum - smoothFrustum) * dt * 0.1;
+
+  const orbitRadius = 10 + smoothFrustum * 0.5;
   const orbitSpeed = 0.08 - Math.min(0.04, organisms.length * 0.005);
   const orbitAngle = time * orbitSpeed;
   camera.position.set(
-    com.x + Math.cos(orbitAngle) * orbitRadius,
-    8 + targetFrustum * 0.3 + Math.sin(time * 0.05) * 1.5,
-    com.z + Math.sin(orbitAngle) * orbitRadius
+    cameraFocus.x + Math.cos(orbitAngle) * orbitRadius,
+    8 + smoothFrustum * 0.3 + Math.sin(time * 0.05) * 1.5,
+    cameraFocus.z + Math.sin(orbitAngle) * orbitRadius
   );
-  camera.lookAt(com.x, 0, com.z);
+  camera.lookAt(cameraFocus.x, 0, cameraFocus.z);
 
   const aspect = window.innerWidth / window.innerHeight;
   // Smooth lerp toward target zoom
-  // Very slow zoom lerp — camera eases out gently
-  camera.left += (-targetFrustum * aspect - camera.left) * dt * 0.15;
-  camera.right += (targetFrustum * aspect - camera.right) * dt * 0.15;
-  camera.top += (targetFrustum - camera.top) * dt * 0.15;
-  camera.bottom += (-targetFrustum - camera.bottom) * dt * 0.15;
+  // Apply smoothed frustum directly
+  camera.left = -smoothFrustum * aspect;
+  camera.right = smoothFrustum * aspect;
+  camera.top = smoothFrustum;
+  camera.bottom = -smoothFrustum;
   camera.updateProjectionMatrix();
 }
 
@@ -520,6 +585,182 @@ function updateHint() {
   }
 }
 
+// ─── Cosmic dust — ambient particles attracted to organisms ──────────────────
+
+interface Mote {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  life: number;
+  maxLife: number;
+}
+
+const motes: Mote[] = [];
+const MAX_MOTES = 60;
+const moteGeo = new THREE.SphereGeometry(0.02, 4, 3);
+
+function spawnMote() {
+  // Spawn at random position in a wide area around the universe
+  const range = smoothFrustum * 2 + 5;
+  const pos = new THREE.Vector3(
+    (Math.random() - 0.5) * range + cameraFocus.x,
+    (Math.random() - 0.5) * 3,
+    (Math.random() - 0.5) * range + cameraFocus.z,
+  );
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.15 + Math.random() * 0.15,
+    blending: THREE.AdditiveBlending,
+  });
+  const mesh = new THREE.Mesh(moteGeo, mat);
+  mesh.position.copy(pos);
+  mesh.scale.setScalar(0.5 + Math.random() * 1.5);
+  scene.add(mesh);
+
+  const angle = Math.random() * Math.PI * 2;
+  const speed = 0.1 + Math.random() * 0.3;
+  motes.push({
+    mesh,
+    velocity: new THREE.Vector3(Math.cos(angle) * speed, (Math.random() - 0.5) * 0.05, Math.sin(angle) * speed),
+    life: 0,
+    maxLife: 8 + Math.random() * 15,
+  });
+}
+
+function updateMotes(dt: number) {
+  // Spawn new motes
+  if (firstSpawned && motes.length < MAX_MOTES && Math.random() < 0.3 * dt) {
+    spawnMote();
+  }
+
+  for (let i = motes.length - 1; i >= 0; i--) {
+    const m = motes[i];
+    m.life += dt;
+
+    // Gentle attraction toward nearest organism
+    let nearestDist = Infinity;
+    const attract = new THREE.Vector3();
+    for (const org of organisms) {
+      if (org.collapsed) continue;
+      for (const node of org.instrument.state.nodes) {
+        const worldPos = node.position.clone().add(org.origin);
+        const d = m.mesh.position.distanceTo(worldPos);
+        if (d < nearestDist && d > 0.3) {
+          nearestDist = d;
+          attract.copy(worldPos).sub(m.mesh.position);
+        }
+      }
+    }
+    // Weak gravity: force proportional to 1/dist²
+    if (nearestDist < 10 && nearestDist > 0.3) {
+      const force = 0.1 / (nearestDist * nearestDist);
+      attract.normalize().multiplyScalar(force);
+      m.velocity.add(attract.multiplyScalar(dt));
+    }
+
+    // Drag
+    m.velocity.multiplyScalar(1 - 0.3 * dt);
+
+    // Move
+    m.mesh.position.add(m.velocity.clone().multiplyScalar(dt));
+
+    // Fade
+    const lifeFrac = m.life / m.maxLife;
+    const fade = lifeFrac < 0.1 ? lifeFrac * 10 : lifeFrac > 0.8 ? (1 - lifeFrac) * 5 : 1;
+    (m.mesh.material as THREE.MeshBasicMaterial).opacity = fade * 0.2;
+
+    // Remove dead motes
+    if (m.life >= m.maxLife) {
+      scene.remove(m.mesh);
+      motes.splice(i, 1);
+    }
+  }
+}
+
+// ─── Escaped packets — excited packets that fly off into space ──────────────
+
+interface EscapedPacket {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  life: number;
+}
+
+const escapedPackets: EscapedPacket[] = [];
+const MAX_ESCAPED = 30;
+
+function checkPacketEscapes() {
+  for (const org of organisms) {
+    if (org.collapsed) continue;
+    const s = org.instrument.state;
+    // Only when packet traffic is high
+    if (s.packets.length < 6) continue;
+
+    const escapeChance = (s.packets.length - 5) * 0.002;
+    for (let i = s.packets.length - 1; i >= 0; i--) {
+      if (escapedPackets.length >= MAX_ESCAPED) break;
+      if (Math.random() > escapeChance) continue;
+
+      const pkt = s.packets[i];
+      if (!pkt.mesh) continue;
+
+      // Yeet the packet into space
+      const worldPos = pkt.mesh.position.clone().add(org.origin);
+      const dir = new THREE.Vector3(
+        Math.random() - 0.5,
+        Math.random() * 0.5 + 0.2, // bias upward
+        Math.random() - 0.5,
+      ).normalize();
+      const speed = 1.5 + Math.random() * 3;
+
+      // Create a new mesh for the escaped packet (detach from instrument)
+      const geo = new THREE.SphereGeometry(0.04, 4, 3);
+      const mat = new THREE.MeshBasicMaterial({
+        color: s.profile.nodeColor,
+        transparent: true,
+        opacity: 0.8,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(worldPos);
+      scene.add(mesh);
+
+      escapedPackets.push({
+        mesh,
+        velocity: dir.multiplyScalar(speed),
+        life: 0,
+      });
+
+      // Remove from the instrument's packet list
+      if (pkt.mesh) s.packetGroup.remove(pkt.mesh);
+      s.packets.splice(i, 1);
+      break; // max one escape per organism per frame
+    }
+  }
+}
+
+function updateEscapedPackets(dt: number) {
+  checkPacketEscapes();
+
+  for (let i = escapedPackets.length - 1; i >= 0; i--) {
+    const ep = escapedPackets[i];
+    ep.life += dt;
+
+    // Slight drag
+    ep.velocity.multiplyScalar(1 - 0.15 * dt);
+    ep.mesh.position.add(ep.velocity.clone().multiplyScalar(dt));
+
+    // Fade out over 3 seconds
+    const alpha = Math.max(0, 1 - ep.life / 3);
+    (ep.mesh.material as THREE.MeshBasicMaterial).opacity = alpha * 0.8;
+    ep.mesh.scale.setScalar(1 + ep.life * 0.5); // grow as it fades
+
+    if (ep.life > 3) {
+      scene.remove(ep.mesh);
+      escapedPackets.splice(i, 1);
+    }
+  }
+}
+
 // ─── Main loop ──────────────────────────────────────────────────────────────
 
 let lastTime = performance.now();
@@ -563,6 +804,8 @@ function loop(now: number) {
 
   updateCollapses(dt);
   updateInteractions(dt);
+  updateMotes(dt);
+  updateEscapedPackets(dt);
   updateCamera(dt);
   updateHint();
 

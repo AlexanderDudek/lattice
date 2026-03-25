@@ -18,7 +18,7 @@ renderer.toneMappingExposure = 1.0;
 const scene = new THREE.Scene();
 scene.add(new THREE.AmbientLight(0x111122, 0.3));
 
-const startFrustum = 3; // start zoomed in tight
+const startFrustum = 1.8; // start very close
 const camera = new THREE.OrthographicCamera(-startFrustum, startFrustum, startFrustum, -startFrustum, -50, 100);
 const cameraBase = new THREE.Vector3(14, 10, 14);
 camera.position.copy(cameraBase);
@@ -170,9 +170,16 @@ function checkDensityCollapse() {
   }
 }
 
+interface ConsumedNode {
+  org: Organism;
+  node: LatticeNode;
+  world: THREE.Vector3;
+  originalLocal: THREE.Vector3; // position before animation
+}
+
 interface CollapseAnim {
   center: THREE.Vector3;
-  affectedOrgs: Organism[];   // organisms that have nodes consumed
+  consumed: ConsumedNode[];   // only the nodes being swallowed
   startTime: number;
   duration: number;
   phase: 'implode' | 'flash' | 'birth';
@@ -181,33 +188,78 @@ interface CollapseAnim {
 
 const collapseAnims: CollapseAnim[] = [];
 
+/** Surgically remove a single node from its organism */
+function removeNodeFromOrganism(org: Organism, node: LatticeNode) {
+  const s = org.instrument.state;
+
+  // Remove edges involving this node
+  for (let i = s.edges.length - 1; i >= 0; i--) {
+    const edge = s.edges[i];
+    if (edge.from === node.id || edge.to === node.id) {
+      s.edgeGroup.remove(edge.line);
+      edge.line.geometry.dispose();
+      (edge.line.material as THREE.Material).dispose();
+      s.edges.splice(i, 1);
+    }
+  }
+
+  // Remove packets involving this node
+  for (let i = s.packets.length - 1; i >= 0; i--) {
+    const pkt = s.packets[i];
+    if (pkt.from === node.id || pkt.to === node.id) {
+      if (pkt.mesh) s.packetGroup.remove(pkt.mesh);
+      s.packets.splice(i, 1);
+    }
+  }
+
+  // Remove node meshes
+  if (node.mesh) {
+    s.nodeGroup.remove(node.mesh);
+    node.mesh.geometry.dispose();
+    (node.mesh.material as THREE.Material).dispose();
+  }
+  if (node.ringMesh) {
+    s.nodeGroup.remove(node.ringMesh);
+    node.ringMesh.geometry.dispose();
+    (node.ringMesh.material as THREE.Material).dispose();
+  }
+
+  // Remove from nodes array
+  const idx = s.nodes.indexOf(node);
+  if (idx !== -1) s.nodes.splice(idx, 1);
+}
+
 function triggerSpatialCollapse(
   center: THREE.Vector3,
   all: { org: Organism; node: LatticeNode; world: THREE.Vector3 }[],
 ) {
-  // Find all organisms that have nodes in the collapse zone
-  const affectedOrgs = new Set<Organism>();
+  const collapseRadius = DENSITY_CHECK_RADIUS * 1.5;
+
+  // Collect only the nodes within the collapse zone
+  const consumed: ConsumedNode[] = [];
   for (const entry of all) {
-    if (entry.world.distanceTo(center) < DENSITY_CHECK_RADIUS * 1.5) {
-      affectedOrgs.add(entry.org);
+    if (entry.world.distanceTo(center) < collapseRadius) {
+      consumed.push({
+        org: entry.org,
+        node: entry.node,
+        world: entry.world.clone(),
+        originalLocal: entry.node.position.clone(),
+      });
     }
   }
 
-  // Mark affected organisms
-  for (const org of affectedOrgs) {
-    org.collapsed = true;
-  }
+  if (consumed.length === 0) return;
 
-  // New organism spawns at the collapse center
+  // New organism spawns near the collapse center
   const angle = Math.random() * Math.PI * 2;
-  const dist = 1.5 + totalCollapses * 0.3;
+  const dist = 0.5 + totalCollapses * 0.2;
   const newOrigin = center.clone().add(
     new THREE.Vector3(Math.cos(angle) * dist, 0, Math.sin(angle) * dist)
   );
 
   collapseAnims.push({
     center,
-    affectedOrgs: [...affectedOrgs],
+    consumed,
     startTime: time,
     duration: 2.2,
     phase: 'implode',
@@ -223,50 +275,49 @@ function updateCollapses(dt: number) {
 
     if (anim.phase === 'implode' && t < 0.5) {
       const pull = t * 2;
-      const eased = pull * pull; // ease-in: accelerating collapse
+      const eased = pull * pull;
 
-      for (const org of anim.affectedOrgs) {
-        const inst = org.instrument;
-        const localCenter = anim.center.clone().sub(org.origin);
-        for (const node of inst.state.nodes) {
-          if (node.mesh) {
-            node.mesh.position.lerpVectors(node.position, localCenter, eased);
-            node.mesh.scale.setScalar(inst.state.profile.nodeScale * (1 - eased * 0.85));
-          }
-          if (node.ringMesh) {
-            node.ringMesh.scale.setScalar(1 - eased);
-          }
+      // Only animate the consumed nodes toward center
+      for (const c of anim.consumed) {
+        const localCenter = anim.center.clone().sub(c.org.origin);
+        if (c.node.mesh) {
+          c.node.mesh.position.lerpVectors(c.originalLocal, localCenter, eased);
+          c.node.mesh.scale.setScalar(c.org.instrument.state.profile.nodeScale * (1 - eased * 0.85));
         }
-        for (const edge of inst.state.edges) {
-          (edge.line.material as THREE.LineBasicMaterial).opacity = 1 - eased;
+        if (c.node.ringMesh) {
+          c.node.ringMesh.scale.setScalar(1 - eased);
         }
       }
-      bloomPass.strength = 0.8 + eased * 3;
+      bloomPass.strength = 0.8 + eased * 2;
     }
 
     if (anim.phase === 'implode' && t >= 0.5 && t < 0.65) {
       anim.phase = 'flash';
-      bloomPass.strength = 4.0;
-      // Remove all affected organisms
-      for (const org of anim.affectedOrgs) {
-        scene.remove(org.instrument.worldGroup);
+      bloomPass.strength = 3.0;
+
+      // Surgically remove only the consumed nodes
+      for (const c of anim.consumed) {
+        removeNodeFromOrganism(c.org, c.node);
+      }
+
+      // If any organism has zero nodes left, remove it entirely
+      for (let oi = organisms.length - 1; oi >= 0; oi--) {
+        const org = organisms[oi];
+        if (org.instrument.state.nodes.length === 0) {
+          scene.remove(org.instrument.worldGroup);
+          organisms.splice(oi, 1);
+        }
       }
     }
 
     if (anim.phase === 'flash' && t >= 0.65) {
       anim.phase = 'birth';
-      bloomPass.strength = 2.0;
+      bloomPass.strength = 1.5;
       totalCollapses++;
 
       // Spawn new organism at collapse site
       const newOrg = spawnOrganism(anim.newOrigin);
       newOrg.age = 0;
-
-      // Remove collapsed organisms from list
-      for (const org of anim.affectedOrgs) {
-        const idx = organisms.indexOf(org);
-        if (idx >= 0) organisms.splice(idx, 1);
-      }
     }
 
     if (t >= 1.0) {
@@ -375,7 +426,7 @@ function updateCamera(dt: number) {
 
   // Zoom based on total nodes — start tight, ease out as universe grows
   const totalNodes = organisms.reduce((s, o) => s + (o.collapsed ? 0 : o.instrument.state.nodes.length), 0);
-  const targetFrustum = Math.max(1.5, 3 + Math.sqrt(Math.max(0, totalNodes - 1)) * 1.2 + organisms.length * 1.5 + zoomOffset);
+  const targetFrustum = Math.max(1.5, 1.8 + Math.sqrt(Math.max(0, totalNodes - 1)) * 0.6 + organisms.length * 1.0 + zoomOffset);
   const orbitRadius = 10 + targetFrustum * 0.5;
   const orbitSpeed = 0.08 - Math.min(0.04, organisms.length * 0.005);
   const orbitAngle = time * orbitSpeed;
@@ -388,10 +439,11 @@ function updateCamera(dt: number) {
 
   const aspect = window.innerWidth / window.innerHeight;
   // Smooth lerp toward target zoom
-  camera.left += (-targetFrustum * aspect - camera.left) * dt * 0.8;
-  camera.right += (targetFrustum * aspect - camera.right) * dt * 0.8;
-  camera.top += (targetFrustum - camera.top) * dt * 0.8;
-  camera.bottom += (-targetFrustum - camera.bottom) * dt * 0.8;
+  // Very slow zoom lerp — camera eases out gently
+  camera.left += (-targetFrustum * aspect - camera.left) * dt * 0.15;
+  camera.right += (targetFrustum * aspect - camera.right) * dt * 0.15;
+  camera.top += (targetFrustum - camera.top) * dt * 0.15;
+  camera.bottom += (-targetFrustum - camera.bottom) * dt * 0.15;
   camera.updateProjectionMatrix();
 }
 

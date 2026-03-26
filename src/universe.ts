@@ -5,6 +5,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { Instrument } from './engine/Instrument';
 import { getAudioCtx } from './engine/audio';
+import { getNodesAtHop } from './engine/graph';
 import { morphologies } from './morphologies/registry';
 
 // ─── Shared scene ───────────────────────────────────────────────────────────
@@ -468,6 +469,109 @@ function handleTap(mouse: THREE.Vector2) {
   }
 }
 
+// ─── Death handling — right-click = Touch of Death ──────────────────────────
+
+interface DeathSite {
+  position: THREE.Vector3;
+  time: number;
+  morphId: string;
+}
+
+const deathSites: DeathSite[] = [];
+
+function handleRightTap(mouse: THREE.Vector2) {
+  raycaster.setFromCamera(mouse, camera);
+
+  // Find closest node across all organisms
+  let bestOrg: Organism | null = null;
+  let bestNode: LatticeNode | null = null;
+  let bestDist = 1.5;
+
+  for (const org of organisms) {
+    if (org.collapsed) continue;
+    for (const node of org.instrument.state.nodes) {
+      if (node.death !== undefined) continue;
+      const worldPos = node.position.clone().add(org.origin);
+      const dist = raycaster.ray.distanceToPoint(worldPos);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestOrg = org;
+        bestNode = node;
+      }
+    }
+  }
+
+  if (bestOrg && bestNode) {
+    // Record death site for later use (Phase 5)
+    deathSites.push({
+      position: bestNode.position.clone().add(bestOrg.origin),
+      time,
+      morphId: bestOrg.instrument.morphology.id,
+    });
+    // Kill the node
+    bestOrg.instrument.killNode(bestNode);
+
+    // Clean up organisms with zero living nodes
+    for (let oi = organisms.length - 1; oi >= 0; oi--) {
+      const org = organisms[oi];
+      if (org.instrument.state.nodes.length === 0) {
+        scene.remove(org.instrument.worldGroup);
+        organisms.splice(oi, 1);
+      }
+    }
+  }
+}
+
+function handleRightHoldDrain(mouse: THREE.Vector2, dt: number) {
+  raycaster.setFromCamera(mouse, camera);
+
+  // Find closest living node across all organisms
+  let bestOrg: Organism | null = null;
+  let bestNode: LatticeNode | null = null;
+  let bestDist = 1.5;
+
+  for (const org of organisms) {
+    if (org.collapsed) continue;
+    for (const node of org.instrument.state.nodes) {
+      if (node.death !== undefined) continue;
+      const worldPos = node.position.clone().add(org.origin);
+      const dist = raycaster.ray.distanceToPoint(worldPos);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestOrg = org;
+        bestNode = node;
+      }
+    }
+  }
+
+  if (!bestOrg || !bestNode) return;
+
+  // Drain the target node: -0.3/s
+  bestNode.energy = Math.max(0, bestNode.energy - 0.3 * dt);
+  if (bestNode.energy <= 0) {
+    bestOrg.instrument.killNode(bestNode);
+    return;
+  }
+
+  // Drain 1-hop neighbors: -0.15/s
+  const hop1 = getNodesAtHop(bestOrg.instrument.state, bestNode.id, 1);
+  for (const n of hop1) {
+    if (n.death !== undefined) continue;
+    n.energy = Math.max(0, n.energy - 0.15 * dt);
+    if (n.energy <= 0) bestOrg.instrument.killNode(n);
+  }
+
+  // Drain 2-hop neighbors: -0.075/s
+  const hop2 = getNodesAtHop(bestOrg.instrument.state, bestNode.id, 2);
+  for (const n of hop2) {
+    if (n.death !== undefined) continue;
+    n.energy = Math.max(0, n.energy - 0.075 * dt);
+    if (n.energy <= 0) bestOrg.instrument.killNode(n);
+  }
+}
+
+let rightHoldMouse: THREE.Vector2 | null = null;
+
 function mouseToNDC(e: MouseEvent): THREE.Vector2 {
   return new THREE.Vector2(
     (e.clientX / window.innerWidth) * 2 - 1,
@@ -488,6 +592,23 @@ canvas.addEventListener('wheel', (e) => {
 let holdMouse: THREE.Vector2 | null = null;
 let holdAccum = 0;
 
+// Prevent default context menu
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Right-click: Touch of Death
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 2) {
+    if (!firstSpawned) return;
+    const mouse = mouseToNDC(e);
+    handleRightTap(mouse);
+    rightHoldMouse = mouse;
+    return;
+  }
+});
+canvas.addEventListener('mouseup', (e) => {
+  if (e.button === 2) rightHoldMouse = null;
+});
+
 canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   // First click: init audio + spawn first organism
@@ -506,10 +627,18 @@ canvas.addEventListener('mousedown', (e) => {
   holdAccum = 99; // fire first tap immediately
 });
 canvas.addEventListener('mousemove', (e) => {
-  if (holdMouse) holdMouse = mouseToNDC(e);
+  const m = mouseToNDC(e);
+  if (holdMouse) holdMouse = m;
+  if (rightHoldMouse) rightHoldMouse = m;
 });
-canvas.addEventListener('mouseup', () => { holdMouse = null; });
-canvas.addEventListener('mouseleave', () => { holdMouse = null; });
+canvas.addEventListener('mouseup', (e) => {
+  if (e.button === 0) holdMouse = null;
+  // button 2 already handled above
+});
+canvas.addEventListener('mouseleave', () => {
+  holdMouse = null;
+  rightHoldMouse = null;
+});
 
 // ─── Audio init handled in mousedown above ──────────────────────────────────
 
@@ -850,6 +979,11 @@ function loop(now: number) {
       holdAccum -= interval;
       handleTap(holdMouse);
     }
+  }
+
+  // Right-hold drain — continuous energy drain near cursor
+  if (rightHoldMouse) {
+    handleRightHoldDrain(rightHoldMouse, dt);
   }
 
   updateCollapses(dt);

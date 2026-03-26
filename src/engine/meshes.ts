@@ -158,6 +158,8 @@ export function createNodeMesh(node: LatticeNode, group: THREE.Group, profile: V
       uEnergy: { value: 0 },
       uBounce: { value: 0 },
       uGlobalIntensity: { value: 1.0 },
+      uDeath: { value: 0 },
+      uRippleDirection: { value: 1.0 },
     },
     transparent: true,
     depthWrite: true,

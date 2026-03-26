@@ -32,6 +32,9 @@ export interface Morphology {
   // Post-split hook — create cycle edges, extra connections, etc.
   onPostSplit?(state: InstrumentState, parent: LatticeNode, child: LatticeNode): void;
 
+  // Death hook — called when a node is killed (right-click)
+  onDeath?(state: InstrumentState, node: LatticeNode): void;
+
   // Whether this mode uses ready-to-split mechanics (C/D style)
   usesReadySplit?: boolean;
 

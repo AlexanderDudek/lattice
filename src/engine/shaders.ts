@@ -8,15 +8,33 @@ export const nodeVertexShader = `
   uniform float uRipplePhase;
   uniform float uReadyGlow;
   uniform float uBounce;
+  uniform float uDeath;
+  uniform float uRippleDirection;
+
+  // Simple hash for crack displacement noise
+  float hash(vec3 p) {
+    p = fract(p * vec3(443.897, 441.423, 437.195));
+    p += dot(p, p.yzx + 19.19);
+    return fract((p.x + p.y) * p.z);
+  }
 
   void main() {
     vNormal = normalMatrix * normal;
     vPos = position;
-    float rippleWave = sin(length(position.xz) * 15.0 - uRipplePhase * 10.0) * 0.5 + 0.5;
+
+    float rippleDir = uRippleDirection;
+    float rippleWave = sin(length(position.xz) * 15.0 - uRipplePhase * 10.0 * rippleDir) * 0.5 + 0.5;
     float rippleDisplace = rippleWave * uRipple * 0.12;
     float readyPulse = sin(uTime * 4.0) * 0.04 * uReadyGlow;
     float bounce = 1.0 + uBounce * 0.4;
-    vec3 displaced = position * bounce * (1.0 + rippleDisplace + readyPulse);
+
+    // Death: crack displacement + scale down
+    float crackNoise = hash(position * 8.0 + uTime * 2.0) * uDeath * 0.3;
+    float deathScale = 1.0 - uDeath * uDeath; // ease-in-cubic shrink
+
+    vec3 displaced = position * bounce * deathScale * (1.0 + rippleDisplace + readyPulse);
+    displaced += normal * crackNoise; // cracks push outward along normals
+
     vec4 mvPosition = modelViewMatrix * vec4(displaced, 1.0);
     vViewPosition = -mvPosition.xyz;
     gl_Position = projectionMatrix * mvPosition;
@@ -37,6 +55,7 @@ export const nodeFragmentShader = `
   uniform float uEnergy;
   uniform float uBounce;
   uniform float uGlobalIntensity;
+  uniform float uDeath;
 
   void main() {
     vec3 normal = normalize(vNormal);
@@ -58,7 +77,12 @@ export const nodeFragmentShader = `
     color *= (0.6 + uEnergy * 0.6);
     color *= uGlobalIntensity;
 
-    gl_FragColor = vec4(color, 0.95);
+    // Death: desaturate toward dark grey, then fade
+    float grey = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(color, vec3(grey * 0.3), uDeath);
+    float alpha = 0.95 * (1.0 - uDeath * 0.8);
+
+    gl_FragColor = vec4(color, alpha);
   }
 `;
 

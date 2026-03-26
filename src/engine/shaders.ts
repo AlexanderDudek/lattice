@@ -36,6 +36,7 @@ export const nodeFragmentShader = `
   uniform float uTime;
   uniform float uEnergy;
   uniform float uBounce;
+  uniform float uGlobalIntensity;
 
   void main() {
     vec3 normal = normalize(vNormal);
@@ -55,6 +56,7 @@ export const nodeFragmentShader = `
     float readyPulse = sin(uTime * 4.0) * 0.3 + 0.7;
     color += vec3(1.0, 0.85, 0.3) * uReadyGlow * readyPulse * 0.8;
     color *= (0.6 + uEnergy * 0.6);
+    color *= uGlobalIntensity;
 
     gl_FragColor = vec4(color, 0.95);
   }

@@ -157,6 +157,7 @@ export function createNodeMesh(node: LatticeNode, group: THREE.Group, profile: V
       uReadyGlow: { value: 0 },
       uEnergy: { value: 0 },
       uBounce: { value: 0 },
+      uGlobalIntensity: { value: 1.0 },
     },
     transparent: true,
     depthWrite: true,

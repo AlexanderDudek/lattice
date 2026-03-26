@@ -94,6 +94,8 @@ export interface InstrumentState {
   packetGroup: THREE.Group;
   attractorGroup: THREE.Group;
   cascadeWaves: CascadeWave[];
+  visualIntensity: number;
+  firstSplitBloom: number;  // bloom spike on first split, decays over ~3s
 }
 
 export const INITIAL_SPLIT_COST = 4;

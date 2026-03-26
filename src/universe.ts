@@ -63,20 +63,55 @@ let totalCollapses = 0;
 let audioReady = false;
 let time = 0;
 
+// ─── Morphology gating — unlock by cumulative node count ───────────────────
+
+let totalNodesEver = 0;    // cumulative across all organisms, including collapsed
+let lastNodeSnapshot = 0;  // for delta tracking
+
+// Thresholds: index into morphologies[] → minimum totalNodesEver to unlock
+// Order matches registry: pluck(0), drone(1), sequencer(2), bells(3), fm(4), string(5), furnace(6), beats(7)
+const MORPH_UNLOCK_THRESHOLDS: number[] = [0, 5, 8, 12, 16, 20, 24, 28];
+const unlockedMorphs = new Set<number>([0]); // pluck always available
+const usedMorphs = new Set<number>();         // track which have been spawned (for bloom pulse)
+
+function updateUnlocks(): void {
+  for (let i = 0; i < morphologies.length; i++) {
+    if (!unlockedMorphs.has(i) && totalNodesEver >= (MORPH_UNLOCK_THRESHOLDS[i] ?? Infinity)) {
+      unlockedMorphs.add(i);
+    }
+  }
+}
+
+/** Count total living nodes and update totalNodesEver */
+function updateNodeCount(): void {
+  let currentTotal = 0;
+  for (const org of organisms) {
+    if (!org.collapsed) currentTotal += org.instrument.state.nodes.length;
+  }
+  // Only add the delta (new nodes since last snapshot)
+  if (currentTotal > lastNodeSnapshot) {
+    totalNodesEver += currentTotal - lastNodeSnapshot;
+  }
+  lastNodeSnapshot = currentTotal;
+  updateUnlocks();
+}
+
 // Collapse config — based on spatial density, not per-organism count
 const DENSITY_CHECK_RADIUS = 2.0;     // radius of the sampling sphere
 const DENSITY_COLLAPSE_THRESHOLD = 30; // nodes within that radius to trigger collapse
 const DENSITY_CHECK_INTERVAL = 0.5;    // seconds between density checks (perf)
 let lastDensityCheck = 0;
 
-// ─── Morphology picker — avoids repeating ────────────────────────────────────
+// ─── Morphology picker — only picks from unlocked, avoids repeating ──────────
 
 let lastMorphIndex = -1;
 function pickMorphology(): number {
+  const available = Array.from(unlockedMorphs);
+  if (available.length === 0) return 0; // fallback to pluck
   let idx: number;
   do {
-    idx = Math.floor(Math.random() * morphologies.length);
-  } while (idx === lastMorphIndex && morphologies.length > 1);
+    idx = available[Math.floor(Math.random() * available.length)];
+  } while (idx === lastMorphIndex && available.length > 1);
   lastMorphIndex = idx;
   return idx;
 }
@@ -86,6 +121,8 @@ function pickMorphology(): number {
 function spawnOrganism(origin: THREE.Vector3) {
   const morphIdx = pickMorphology();
   const morphology = morphologies[morphIdx];
+  const isFirstUse = !usedMorphs.has(morphIdx);
+  usedMorphs.add(morphIdx);
 
   const inst = Instrument.headless(morphology);
 
@@ -95,6 +132,16 @@ function spawnOrganism(origin: THREE.Vector3) {
   scene.add(inst.worldGroup);
 
   if (audioReady) inst.initAudio();
+
+  // First time this morphology appears — bloom pulse to celebrate
+  if (isFirstUse && morphIdx > 0) {
+    bloomPass.strength = Math.max(bloomPass.strength, 2.0);
+    // Give the initial node extra visual pop
+    if (inst.state.nodes[0]) {
+      inst.state.nodes[0].ripple = 1.0;
+      inst.state.nodes[0].bounce = 0.8;
+    }
+  }
 
   const org: Organism = {
     instrument: inst,
@@ -782,6 +829,9 @@ function loop(now: number) {
     org.age += dt;
     org.instrument.update(dt);
   }
+
+  // Track cumulative nodes for morphology gating
+  updateNodeCount();
 
   // Spatial density check — collapse where too many nodes are packed together
   lastDensityCheck += dt;

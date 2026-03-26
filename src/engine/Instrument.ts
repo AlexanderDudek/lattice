@@ -102,6 +102,8 @@ export class Instrument {
       packetGroup,
       attractorGroup,
       cascadeWaves: [],
+      visualIntensity: 0.1,
+      firstSplitBloom: 0,
     };
 
     createNodeMesh(initialNode, nodeGroup, profile);
@@ -197,9 +199,14 @@ export class Instrument {
       packetGroup,
       attractorGroup,
       cascadeWaves: [],
+      visualIntensity: 0.1,
+      firstSplitBloom: 0,
     };
 
     createNodeMesh(initialNode, nodeGroup, profile);
+
+    // Start with bloom at near-zero — dramatic reveal on first split
+    bloomPass.strength = profile.bloomStrength * 0.1;
 
     // Hold-to-autotap: track mouse state on canvas
     canvas.addEventListener('mousedown', (e) => {
@@ -270,7 +277,7 @@ export class Instrument {
     if (!s.phaseChanged) {
       s.tension = Math.min(1, s.totalTaps / INITIAL_SPLIT_COST);
       s.bgTarget = s.profile.bgHueBase + s.tension * 0.1;
-      if (s.bloomPass) s.bloomPass.strength = s.profile.bloomStrength + s.tension * 0.6;
+      // Bloom ramp is now handled by visualIntensity in update()
     }
 
     if (s.phaseChanged && this.morphology.onTap) {
@@ -340,7 +347,7 @@ export class Instrument {
     if (!s.phaseChanged) {
       s.tension = Math.min(1, s.totalTaps / INITIAL_SPLIT_COST);
       s.bgTarget = s.profile.bgHueBase + s.tension * 0.1;
-      s.bloomPass.strength = s.profile.bloomStrength + s.tension * 0.6;
+      // Bloom ramp is now handled by visualIntensity in update()
     }
 
     // Mode-specific tap
@@ -360,6 +367,11 @@ export class Instrument {
     s.phaseChanged = true;
     s.splitFlash = 1;
     s.screenShake = isFirstSplit ? 0.8 : 0.4;
+
+    // First split: dramatic bloom spike — THE birth of the network
+    if (isFirstSplit) {
+      s.firstSplitBloom = 1.0;
+    }
 
     node.energy = 0;
     node.tapCount = 0;
@@ -457,6 +469,39 @@ export class Instrument {
     s.time += dt;
     const t = s.time;
 
+    // ─── Visual intensity ramp ──────────────────────────────────────────
+    const nodeCount = s.nodes.length;
+    let targetIntensity: number;
+    if (nodeCount <= 1 && !s.phaseChanged) {
+      targetIntensity = 0.1;           // lone root node — dim and lonely
+    } else if (nodeCount <= 2) {
+      targetIntensity = 0.4;           // first split just happened
+    } else if (nodeCount <= 8) {
+      targetIntensity = 0.4 + (nodeCount - 2) / 6 * 0.2;  // ramp to ~0.6
+    } else if (nodeCount <= 16) {
+      targetIntensity = 0.6 + (nodeCount - 8) / 8 * 0.2;  // ramp to ~0.8
+    } else if (nodeCount <= 32) {
+      targetIntensity = 0.8 + (nodeCount - 16) / 16 * 0.2; // ramp to 1.0
+    } else {
+      targetIntensity = 1.0;           // full visual fidelity
+    }
+    // Smooth lerp — never snap
+    s.visualIntensity += (targetIntensity - s.visualIntensity) * dt * 2.0;
+
+    // First-split bloom spike — decays over ~3 seconds
+    if (s.firstSplitBloom > 0.01) {
+      s.firstSplitBloom *= Math.pow(0.15, dt);  // exponential decay
+      if (s.firstSplitBloom < 0.01) s.firstSplitBloom = 0;
+    }
+
+    // Bloom strength: base scaled by intensity + first-split spike + split flash
+    if (s.bloomPass) {
+      const baseBloom = s.profile.bloomStrength * (0.1 + s.visualIntensity * 0.9);
+      const firstSplitSpike = s.firstSplitBloom * s.profile.bloomStrength * 2.5;
+      const splitFlashBloom = s.splitFlash * 2.5;
+      s.bloomPass.strength = baseBloom + firstSplitSpike + splitFlashBloom;
+    }
+
     // Background
     s.bgHue += (s.bgTarget - s.bgHue) * dt * 2;
     if (s.renderer) s.renderer.setClearColor(new THREE.Color().setHSL(s.bgHue, 0.12, 0.018 + s.tension * 0.012));
@@ -487,12 +532,9 @@ export class Instrument {
       s.screenShake = 0;
     }
 
-    // Split flash
+    // Split flash decay (bloom is managed in the visual intensity section above)
     if (s.splitFlash > 0) {
       s.splitFlash = Math.max(0, s.splitFlash - dt * 4);
-      if (s.bloomPass) s.bloomPass.strength = s.profile.bloomStrength + s.splitFlash * 2.5;
-    } else if (s.phaseChanged && s.bloomPass) {
-      s.bloomPass.strength = s.profile.bloomStrength;
     }
 
     // Nodes
@@ -513,6 +555,7 @@ export class Instrument {
         mat.uniforms.uReadyGlow.value = node.readyGlow;
         mat.uniforms.uEnergy.value = node.energy;
         mat.uniforms.uBounce.value = node.bounce;
+        mat.uniforms.uGlobalIntensity.value = s.visualIntensity;
       }
       if (node.ringMesh) {
         const rm = node.ringMesh.material as THREE.ShaderMaterial;

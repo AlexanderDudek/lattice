@@ -7,7 +7,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { InstrumentState, LatticeNode, INITIAL_SPLIT_COST } from './types';
 import { MorphologyAudio } from './audio';
 import { createNodeMesh, createEdgeLine } from './meshes';
-import { spawnPacket } from './graph';
+import { spawnPacket, removeNode, findBridges, findComponents, getNodesAtHop } from './graph';
 import type { Morphology } from '../morphologies/Morphology';
 
 export class Instrument {
@@ -26,6 +26,16 @@ export class Instrument {
   private _holdMouse: THREE.Vector2 | null = null;
   private _holdAccum = 0;
 
+  /** Right-click death drain state */
+  private _rightHoldMouse: THREE.Vector2 | null = null;
+  private _rightHoldActive = false;
+
+  /** Nodes currently in death animation (dying but not yet removed) */
+  private _dyingNodes: LatticeNode[] = [];
+
+  /** Bloom anti-flash timer */
+  private _bloomDip = 0;
+
   /**
    * Create a headless instrument (no renderer/composer/canvas listeners).
    * Used in universe mode where a shared scene handles rendering.
@@ -40,6 +50,10 @@ export class Instrument {
     inst.skipRender = true;
     inst._holdMouse = null;
     inst._holdAccum = 0;
+    inst._rightHoldMouse = null;
+    inst._rightHoldActive = false;
+    inst._dyingNodes = [];
+    inst._bloomDip = 0;
 
     const profile = morphology.profile;
     const scene = new THREE.Scene();
@@ -215,10 +229,30 @@ export class Instrument {
       this._holdAccum = 99; // fire first tap immediately
     });
     canvas.addEventListener('mousemove', (e) => {
-      if (this._holdMouse) this._holdMouse = this._mouseFromEvent(e);
+      const m = this._mouseFromEvent(e);
+      if (this._holdMouse) this._holdMouse = m;
+      if (this._rightHoldMouse) this._rightHoldMouse = m;
     });
-    canvas.addEventListener('mouseup', () => { this._holdMouse = null; });
-    canvas.addEventListener('mouseleave', () => { this._holdMouse = null; });
+    canvas.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this._holdMouse = null;
+      if (e.button === 2) this._rightHoldMouse = null;
+    });
+    canvas.addEventListener('mouseleave', () => {
+      this._holdMouse = null;
+      this._rightHoldMouse = null;
+    });
+
+    // Right-click: instant kill on click, drain on hold
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 2) return;
+      const mouse = this._mouseFromEvent(e);
+      // Instant kill on right-click
+      this.handleRightClick(mouse);
+      // Start drain tracking
+      this._rightHoldMouse = mouse;
+      this._rightHoldActive = true;
+    });
   }
 
   private _mouseFromEvent(e: MouseEvent): THREE.Vector2 {
@@ -356,6 +390,279 @@ export class Instrument {
     }
 
     if (closest.energy >= 1) this.splitNode(closest);
+  }
+
+  // ─── Death mechanics ─────────────────────────────────────────────────────
+
+  /** Right-click on a node — instant kill */
+  handleRightClick(mouse: THREE.Vector2) {
+    const s = this.state;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, s.camera);
+
+    let closest: LatticeNode | null = null;
+    let minDist = 1.0;
+    for (const node of s.nodes) {
+      if (node.death !== undefined) continue; // already dying
+      const dist = raycaster.ray.distanceToPoint(node.position);
+      if (dist < minDist) { minDist = dist; closest = node; }
+    }
+
+    if (closest) this.killNode(closest);
+  }
+
+  /**
+   * Right-click raycast in merged/universe view — uses offset for local space.
+   * Returns true if a node was hit.
+   */
+  handleRightRaycast(raycaster: THREE.Raycaster, offset?: THREE.Vector3): boolean {
+    const s = this.state;
+    let ray = raycaster.ray;
+    if (offset && (offset.x !== 0 || offset.y !== 0 || offset.z !== 0)) {
+      ray = new THREE.Ray(ray.origin.clone().sub(offset), ray.direction.clone());
+    }
+
+    let closest: LatticeNode | null = null;
+    let minDist = 1.0;
+    for (const node of s.nodes) {
+      if (node.death !== undefined) continue;
+      const dist = ray.distanceToPoint(node.position);
+      if (dist < minDist) { minDist = dist; closest = node; }
+    }
+
+    if (closest) {
+      this.killNode(closest);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Drain energy from nodes near the right-held cursor.
+   * Called each frame while right mouse is held.
+   */
+  handleRightHold(mouse: THREE.Vector2, dt: number, offset?: THREE.Vector3) {
+    const s = this.state;
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(mouse, s.camera);
+
+    let ray = raycaster.ray;
+    if (offset && (offset.x !== 0 || offset.y !== 0 || offset.z !== 0)) {
+      ray = new THREE.Ray(ray.origin.clone().sub(offset), ray.direction.clone());
+    }
+
+    // Find the closest living node to cursor
+    let closest: LatticeNode | null = null;
+    let minDist = 1.5; // wider radius for drain
+    for (const node of s.nodes) {
+      if (node.death !== undefined) continue;
+      const dist = ray.distanceToPoint(node.position);
+      if (dist < minDist) { minDist = dist; closest = node; }
+    }
+
+    if (!closest) return;
+
+    // Drain target: -0.3/s
+    closest.energy = Math.max(0, closest.energy - 0.3 * dt);
+    if (closest.energy <= 0) {
+      this.killNode(closest);
+      return;
+    }
+
+    // Drain 1-hop neighbors: -0.15/s (50% falloff)
+    const hop1 = getNodesAtHop(s, closest.id, 1);
+    for (const n of hop1) {
+      if (n.death !== undefined) continue;
+      n.energy = Math.max(0, n.energy - 0.15 * dt);
+      if (n.energy <= 0) this.killNode(n);
+    }
+
+    // Drain 2-hop neighbors: -0.075/s
+    const hop2 = getNodesAtHop(s, closest.id, 2);
+    for (const n of hop2) {
+      if (n.death !== undefined) continue;
+      n.energy = Math.max(0, n.energy - 0.075 * dt);
+      if (n.energy <= 0) this.killNode(n);
+    }
+  }
+
+  /** Kill a node — triggers death animation, energy burst, bridge detection */
+  killNode(node: LatticeNode) {
+    const s = this.state;
+
+    // Don't kill if already dying or if it's the last node
+    if (node.death !== undefined) return;
+    if (s.nodes.length <= 1) return;
+
+    // Check if this is a bridge node BEFORE we remove it
+    const bridges = findBridges(s);
+    const isBridge = bridges.has(node.id);
+
+    // Death sound
+    this.audio.onDeath(node.position, node.energy, node.generation);
+
+    // Morphology death hook
+    if (this.morphology.onDeath) {
+      this.morphology.onDeath(s, node);
+    }
+
+    // Energy burst to neighbors within radius 2.0
+    const burstEnergy = (INITIAL_SPLIT_COST * Math.pow(2, node.generation)) * 0.01;
+    for (const other of s.nodes) {
+      if (other.id === node.id || other.death !== undefined) continue;
+      const dist = node.position.distanceTo(other.position);
+      if (dist < 2.0) {
+        const falloff = 1 - dist / 2.0;
+        other.energy = Math.min(1, other.energy + burstEnergy * falloff);
+        other.ripple = Math.min(1, other.ripple + 0.5 * falloff);
+        other.ripplePhase = 0;
+        other.bounce = Math.min(0.5, other.bounce + 0.3 * falloff);
+      }
+    }
+
+    // Screen shake — lower magnitude, slower decay (rumble)
+    s.screenShake = Math.max(s.screenShake, 0.15);
+
+    // Bloom anti-flash — dip bloom briefly
+    this._bloomDip = 0.2;
+
+    // Start death animation
+    node.death = 0.001; // just above 0 to indicate dying
+    this._dyingNodes.push(node);
+
+    // Set inward ripple
+    node.ripple = 1;
+    node.ripplePhase = 0;
+    if (node.mesh) {
+      const mat = node.mesh.material as THREE.ShaderMaterial;
+      mat.uniforms.uRippleDirection.value = -1; // inward ripple
+    }
+
+    // Actually remove the node from graph (edges, packets) immediately
+    removeNode(s, node.id);
+
+    // Bridge handling — detect orphaned subgraphs
+    if (isBridge && s.nodes.length > 0) {
+      const components = findComponents(s);
+      if (components.length > 1) {
+        // Find the largest component — that's the "main" one
+        let largestIdx = 0;
+        for (let i = 1; i < components.length; i++) {
+          if (components[i].size > components[largestIdx].size) largestIdx = i;
+        }
+
+        // All other components are orphans — set them drifting
+        for (let i = 0; i < components.length; i++) {
+          if (i === largestIdx) continue;
+          const orphanIds = components[i];
+          // Compute center of orphan group
+          const center = new THREE.Vector3();
+          let count = 0;
+          for (const id of orphanIds) {
+            const n = s.nodes.find(nd => nd.id === id);
+            if (n) { center.add(n.position); count++; }
+          }
+          if (count > 0) center.divideScalar(count);
+
+          // Set drift velocity — outward from kill site
+          const driftDir = center.clone().sub(node.position).normalize();
+          if (driftDir.length() < 0.1) driftDir.set(Math.random() - 0.5, 0.2, Math.random() - 0.5).normalize();
+
+          for (const id of orphanIds) {
+            const n = s.nodes.find(nd => nd.id === id);
+            if (n) {
+              n.driftVelocity = driftDir.clone().multiplyScalar(0.3 + Math.random() * 0.2);
+              n.orphanFade = 3.0; // 3 seconds to fade and remove
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /** Update death animations and orphan drift each frame */
+  private _updateDeath(dt: number) {
+    const s = this.state;
+
+    // Update dying nodes (visual-only, already removed from graph)
+    for (let i = this._dyingNodes.length - 1; i >= 0; i--) {
+      const node = this._dyingNodes[i];
+      if (node.death === undefined) { this._dyingNodes.splice(i, 1); continue; }
+
+      node.death = Math.min(1, node.death + dt * 2.5); // ~400ms death animation
+
+      // Update shader uniforms on the detached mesh
+      if (node.mesh) {
+        const mat = node.mesh.material as THREE.ShaderMaterial;
+        mat.uniforms.uDeath.value = node.death;
+        // Scale down with ease-in-cubic
+        const scale = s.profile.nodeScale * (1 - node.death * node.death * node.death);
+        node.mesh.scale.setScalar(Math.max(0.01, scale));
+      }
+      if (node.ringMesh) {
+        const scale = 1 - node.death;
+        node.ringMesh.scale.setScalar(Math.max(0.01, scale));
+      }
+
+      // Remove when animation complete
+      if (node.death >= 1) {
+        // Dispose the visual-only meshes
+        if (node.mesh) {
+          s.nodeGroup.remove(node.mesh);
+          node.mesh.geometry.dispose();
+          (node.mesh.material as THREE.Material).dispose();
+          node.mesh = null;
+        }
+        if (node.ringMesh) {
+          s.nodeGroup.remove(node.ringMesh);
+          node.ringMesh.geometry.dispose();
+          (node.ringMesh.material as THREE.Material).dispose();
+          node.ringMesh = null;
+        }
+        this._dyingNodes.splice(i, 1);
+      }
+    }
+
+    // Update orphan drift
+    for (let i = s.nodes.length - 1; i >= 0; i--) {
+      const node = s.nodes[i];
+      if (node.orphanFade === undefined) continue;
+
+      node.orphanFade -= dt;
+
+      // Drift outward
+      if (node.driftVelocity) {
+        node.position.add(node.driftVelocity.clone().multiplyScalar(dt));
+        if (node.mesh) node.mesh.position.copy(node.position);
+        if (node.ringMesh) node.ringMesh.position.copy(node.position);
+      }
+
+      // Fade opacity
+      const fadeT = Math.max(0, node.orphanFade / 3.0);
+      if (node.mesh) {
+        const mat = node.mesh.material as THREE.ShaderMaterial;
+        mat.uniforms.uGlobalIntensity.value = fadeT;
+        mat.opacity = fadeT;
+      }
+
+      // Play descending tone while fading
+      if (node.orphanFade > 0 && node.orphanFade < 2.9 && Math.random() < 0.02) {
+        this.audio.onDeath(node.position, node.energy * fadeT, node.generation);
+      }
+
+      // Remove when fully faded
+      if (node.orphanFade <= 0) {
+        removeNode(s, node.id);
+      }
+    }
+
+    // Bloom anti-flash
+    if (this._bloomDip > 0) {
+      this._bloomDip = Math.max(0, this._bloomDip - dt * 5); // ~200ms
+      if (s.bloomPass) {
+        s.bloomPass.strength = Math.max(0, s.profile.bloomStrength - this._bloomDip * 2);
+      }
+    }
   }
 
   // ─── Node splitting ──────────────────────────────────────────────────────
@@ -527,9 +834,18 @@ export class Instrument {
       }
     }
     if (s.screenShake > 0.001) {
+      // Death shake decays slower (rumble) vs life shake (snap)
       s.screenShake *= Math.pow(0.05, dt);
     } else {
       s.screenShake = 0;
+    }
+
+    // Death animations, orphan drift, bloom dip
+    this._updateDeath(dt);
+
+    // Right-hold drain (only in standalone mode — universe/merged handle externally)
+    if (this._rightHoldMouse && !this.skipRender) {
+      this.handleRightHold(this._rightHoldMouse, dt);
     }
 
     // Split flash decay (bloom is managed in the visual intensity section above)

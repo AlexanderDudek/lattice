@@ -21,6 +21,12 @@ export interface LatticeNode {
   generation: number;
   bounce: number;
   lastTapTime: number;
+  /** Death animation progress: 0 = alive, 0→1 = dying, removed at 1 */
+  death?: number;
+  /** Drift velocity for orphaned nodes after bridge kill */
+  driftVelocity?: THREE.Vector3;
+  /** Fade timer for orphaned nodes (seconds remaining) */
+  orphanFade?: number;
 }
 
 export interface Packet {

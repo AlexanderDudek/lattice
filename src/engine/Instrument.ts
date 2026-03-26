@@ -486,6 +486,38 @@ export class Instrument {
     }
   }
 
+  /**
+   * Drain a specific node and its neighbors. For use by external callers
+   * (universe/merged view) that have already identified the target node.
+   */
+  drainNode(node: LatticeNode, dt: number) {
+    const s = this.state;
+    if (node.death !== undefined) return;
+
+    // Drain target: -0.3/s
+    node.energy = Math.max(0, node.energy - 0.3 * dt);
+    if (node.energy <= 0) {
+      this.killNode(node);
+      return;
+    }
+
+    // Drain 1-hop neighbors: -0.15/s
+    const hop1 = getNodesAtHop(s, node.id, 1);
+    for (const n of hop1) {
+      if (n.death !== undefined) continue;
+      n.energy = Math.max(0, n.energy - 0.15 * dt);
+      if (n.energy <= 0) this.killNode(n);
+    }
+
+    // Drain 2-hop neighbors: -0.075/s
+    const hop2 = getNodesAtHop(s, node.id, 2);
+    for (const n of hop2) {
+      if (n.death !== undefined) continue;
+      n.energy = Math.max(0, n.energy - 0.075 * dt);
+      if (n.energy <= 0) this.killNode(n);
+    }
+  }
+
   /** Kill a node — triggers death animation, energy burst, bridge detection */
   killNode(node: LatticeNode) {
     const s = this.state;

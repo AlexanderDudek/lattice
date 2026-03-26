@@ -5,7 +5,6 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { Instrument } from './engine/Instrument';
 import { getAudioCtx } from './engine/audio';
-import { getNodesAtHop } from './engine/graph';
 import { morphologies } from './morphologies/registry';
 
 // ─── Shared scene ───────────────────────────────────────────────────────────
@@ -545,29 +544,7 @@ function handleRightHoldDrain(mouse: THREE.Vector2, dt: number) {
   }
 
   if (!bestOrg || !bestNode) return;
-
-  // Drain the target node: -0.3/s
-  bestNode.energy = Math.max(0, bestNode.energy - 0.3 * dt);
-  if (bestNode.energy <= 0) {
-    bestOrg.instrument.killNode(bestNode);
-    return;
-  }
-
-  // Drain 1-hop neighbors: -0.15/s
-  const hop1 = getNodesAtHop(bestOrg.instrument.state, bestNode.id, 1);
-  for (const n of hop1) {
-    if (n.death !== undefined) continue;
-    n.energy = Math.max(0, n.energy - 0.15 * dt);
-    if (n.energy <= 0) bestOrg.instrument.killNode(n);
-  }
-
-  // Drain 2-hop neighbors: -0.075/s
-  const hop2 = getNodesAtHop(bestOrg.instrument.state, bestNode.id, 2);
-  for (const n of hop2) {
-    if (n.death !== undefined) continue;
-    n.energy = Math.max(0, n.energy - 0.075 * dt);
-    if (n.energy <= 0) bestOrg.instrument.killNode(n);
-  }
+  bestOrg.instrument.drainNode(bestNode, dt);
 }
 
 let rightHoldMouse: THREE.Vector2 | null = null;

@@ -5,6 +5,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { Instrument } from './engine/Instrument';
 import { getAudioCtx } from './engine/audio';
+import { LatticeNode } from './engine/types';
 import { morphologies } from './morphologies/registry';
 
 // ─── Generate grid slots from registry ──────────────────────────────────────
@@ -205,10 +206,60 @@ mergedCanvas.addEventListener('mousedown', (e) => {
   mergedHoldAccum = 99; // fire first tap immediately
 });
 mergedCanvas.addEventListener('mousemove', (e) => {
-  if (mergedHoldMouse) mergedHoldMouse = mergedMouseFromEvent(e);
+  const m = mergedMouseFromEvent(e);
+  if (mergedHoldMouse) mergedHoldMouse = m;
+  if (mergedRightHoldMouse) mergedRightHoldMouse = m;
 });
-mergedCanvas.addEventListener('mouseup', () => { mergedHoldMouse = null; });
-mergedCanvas.addEventListener('mouseleave', () => { mergedHoldMouse = null; });
+mergedCanvas.addEventListener('mouseup', (e) => {
+  if (e.button === 0) mergedHoldMouse = null;
+  if (e.button === 2) mergedRightHoldMouse = null;
+});
+mergedCanvas.addEventListener('mouseleave', () => {
+  mergedHoldMouse = null;
+  mergedRightHoldMouse = null;
+});
+
+// ─── Merged view right-click — Touch of Death ────────────────────────────────
+
+mergedCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+let mergedRightHoldMouse: THREE.Vector2 | null = null;
+
+function mergedRightTapAt(mouse: THREE.Vector2) {
+  const raycaster = new THREE.Raycaster();
+  raycaster.setFromCamera(mouse, mergedCamera);
+
+  let bestInst: Instrument | null = null;
+  let bestDist = 1.0;
+  let bestOffset = mergedOffsets[0];
+
+  for (let i = 0; i < instruments.length; i++) {
+    const inst = instruments[i];
+    const offset = mergedOffsets[i];
+    const localOrigin = raycaster.ray.origin.clone().sub(offset);
+    const localRay = new THREE.Ray(localOrigin, raycaster.ray.direction.clone());
+    for (const node of inst.state.nodes) {
+      if (node.death !== undefined) continue;
+      const dist = localRay.distanceToPoint(node.position);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestInst = inst;
+        bestOffset = offset;
+      }
+    }
+  }
+
+  if (bestInst) {
+    bestInst.handleRightRaycast(raycaster, bestOffset);
+  }
+}
+
+mergedCanvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 2) return;
+  const mouse = mergedMouseFromEvent(e);
+  mergedRightTapAt(mouse);
+  mergedRightHoldMouse = mouse;
+});
 
 // ─── View state ─────────────────────────────────────────────────────────────
 
@@ -440,6 +491,29 @@ function loop(now: number) {
       if (mergedHoldAccum >= interval) {
         mergedHoldAccum -= interval;
         mergedTapAt(mergedHoldMouse);
+      }
+    }
+
+    // Right-hold drain in merged view
+    if (mergedRightHoldMouse) {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mergedRightHoldMouse, mergedCamera);
+      let bestInst: Instrument | null = null;
+      let bestNode: LatticeNode | null = null;
+      let bestDist = 1.5;
+      for (let i = 0; i < instruments.length; i++) {
+        const inst = instruments[i];
+        const offset = mergedOffsets[i];
+        const localOrigin = raycaster.ray.origin.clone().sub(offset);
+        const localRay = new THREE.Ray(localOrigin, raycaster.ray.direction.clone());
+        for (const node of inst.state.nodes) {
+          if (node.death !== undefined) continue;
+          const dist = localRay.distanceToPoint(node.position);
+          if (dist < bestDist) { bestDist = dist; bestInst = inst; bestNode = node; }
+        }
+      }
+      if (bestInst && bestNode) {
+        bestInst.drainNode(bestNode, dt);
       }
     }
 

@@ -570,8 +570,28 @@ export class Instrument {
       mat.uniforms.uRippleDirection.value = -1; // inward ripple
     }
 
-    // Actually remove the node from graph (edges, packets) immediately
-    removeNode(s, node.id);
+    // Remove graph connectivity (edges, packets) but keep meshes for animation
+    // Remove edges involving this node
+    for (let i = s.edges.length - 1; i >= 0; i--) {
+      const edge = s.edges[i];
+      if (edge.from === node.id || edge.to === node.id) {
+        s.edgeGroup.remove(edge.line);
+        edge.line.geometry.dispose();
+        (edge.line.material as THREE.Material).dispose();
+        s.edges.splice(i, 1);
+      }
+    }
+    // Remove packets involving this node
+    for (let i = s.packets.length - 1; i >= 0; i--) {
+      const pkt = s.packets[i];
+      if (pkt.from === node.id || pkt.to === node.id) {
+        if (pkt.mesh) s.packetGroup.remove(pkt.mesh);
+        s.packets.splice(i, 1);
+      }
+    }
+    // Remove from nodes array (but keep meshes alive for _dyingNodes animation)
+    const nodeIdx = s.nodes.indexOf(node);
+    if (nodeIdx !== -1) s.nodes.splice(nodeIdx, 1);
 
     // Bridge handling — detect orphaned subgraphs
     if (isBridge && s.nodes.length > 0) {

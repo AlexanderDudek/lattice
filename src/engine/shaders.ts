@@ -75,7 +75,7 @@ export const nodeFragmentShader = `
     float readyPulse = sin(uTime * 4.0) * 0.3 + 0.7;
     color += vec3(1.0, 0.85, 0.3) * uReadyGlow * readyPulse * 0.8;
     color *= (0.6 + uEnergy * 0.6);
-    color *= uGlobalIntensity;
+    color *= 0.3 + uGlobalIntensity * 0.7;
 
     // Death: desaturate toward dark grey, then fade
     float grey = dot(color, vec3(0.299, 0.587, 0.114));

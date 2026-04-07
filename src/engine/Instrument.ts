@@ -116,7 +116,7 @@ export class Instrument {
       packetGroup,
       attractorGroup,
       cascadeWaves: [],
-      visualIntensity: 0.1,
+      visualIntensity: 0.25,
       firstSplitBloom: 0,
     };
 
@@ -213,14 +213,14 @@ export class Instrument {
       packetGroup,
       attractorGroup,
       cascadeWaves: [],
-      visualIntensity: 0.1,
+      visualIntensity: 0.25,
       firstSplitBloom: 0,
     };
 
     createNodeMesh(initialNode, nodeGroup, profile);
 
-    // Start with bloom at near-zero — dramatic reveal on first split
-    bloomPass.strength = profile.bloomStrength * 0.1;
+    // Start with bloom low — dramatic reveal on first split
+    bloomPass.strength = profile.bloomStrength * 0.25;
 
     // Hold-to-autotap: track mouse state on canvas
     canvas.addEventListener('mousedown', (e) => {
@@ -832,7 +832,7 @@ export class Instrument {
     const nodeCount = s.nodes.length;
     let targetIntensity: number;
     if (nodeCount <= 1 && !s.phaseChanged) {
-      targetIntensity = 0.1;           // lone root node — dim and lonely
+      targetIntensity = 0.25;          // lone root node — dim but visible
     } else if (nodeCount <= 2) {
       targetIntensity = 0.4;           // first split just happened
     } else if (nodeCount <= 8) {
